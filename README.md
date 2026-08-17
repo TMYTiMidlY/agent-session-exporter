@@ -27,6 +27,7 @@ HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主�
 | 读取任意位置的会话文件（scp 来的 / 恢复出来的） | `asmgr html --file /path/to/events.jsonl -o session.html` |
 | 搜索恢复出来的备份缓存目录 | `asmgr search "关键词" --file /path/to/restored-cache` |
 | 运行备份（restic 封装） | `asmgr backup run --dry-run` |
+| 把备份快照恢复到隔离缓存 | `asmgr backup cache latest --target ~/.cache/asmgr/restic-cache` |
 
 ## 支持的 agent 与数据来源
 
@@ -191,24 +192,67 @@ asmgr md <session-id> -s summary.md -o report.md              # 注入一份 mar
 
 ### `asmgr backup`
 
-`backup` 是一个命令组：
+`backup` 是正式的 restic 备份命令组：
 
 ```bash
-asmgr backup run --dry-run     # 预览 restic 备份
-asmgr backup run               # 运行 restic 备份封装（backup.sh）
-asmgr backup                   # `backup run` 的向后兼容别名
-asmgr backup cache latest --target ~/.cache/asmgr/restic-cache   # 把一个快照恢复进缓存目录
+asmgr backup run --dry-run
+asmgr backup run
+asmgr backup cache latest --target ~/.cache/asmgr/restic-cache
 ```
 
-`backup cache` 把 agent 历史从 restic 快照恢复进一个**本地缓存目录**（绝不恢复进 live 的 `~/.copilot`、`~/.claude`、`~/.codex`——那会被拒绝），之后读命令可用 `--file` 在其上工作（未来还有 `--source cache`）。加 `--host <h>` 钉某主机的快照，`--dry-run` 只预览、不实际恢复。
+`backup run` 默认备份 `~/.copilot`、`~/.claude` 与 `~/.codex`，只处理实际存在的路径。
+运行时会先尽力把 Copilot 的 SQLite WAL 合入主库，再执行加密、去重、增量备份；
+SQLite 热文件、锁文件和 Copilot 进程日志不会进入快照。每次快照带
+`agent-session-manager` 与当前主机标签，并应用 daily / weekly / monthly 保留策略。
 
-备份是未来检索 / 搜索工作的一个数据源。当前搜索读 live 本地历史；对恢复出来的备份缓存做**持久化**索引单独跟踪（issue #1）。今天要临时用，就恢复一个快照，再用 `--file` 让任意读命令指过去：
+`backup cache` 把指定快照恢复到独立缓存，明确拒绝 home 目录及 live 的
+`~/.copilot`、`~/.claude`、`~/.codex`。缓存用于 `list/search/show/html/md --file`，
+不等于把会话恢复成原 agent 可以 `--resume` 的状态。可用 `--host <host>` 限定快照
+主机，或用 `--dry-run` 只打印恢复命令。
+
+> 当前备份命令需要从源码 checkout 运行；npm 包和原生二进制尚未包含备份运行时。
+
+#### 配置
+
+复制配置模板并限制权限：
 
 ```bash
-restic restore latest --target /tmp/cache          # 恢复一个快照
-asmgr search "关键词" --file /tmp/cache           # 搜索恢复出来的缓存
-asmgr html <session-id> --file /tmp/cache -o s.html
+cp secrets.env.example secrets.env
+chmod 600 secrets.env
 ```
+
+必填项是 `RESTIC_REPOSITORY` 与 `RESTIC_PASSWORD`；S3 兼容后端还需要
+`AWS_ACCESS_KEY_ID` 和 `AWS_SECRET_ACCESS_KEY`。可用 `RESTIC_BIN` 覆盖 restic
+位置、用 `BACKUP_AGENT_DIRS` 调整数据源、用 `BACKUP_EXCLUDE_REWIND=1` 排除
+Copilot rewind 快照。
+
+新仓库先加载配置并初始化，再运行备份：
+
+```bash
+set -a; source secrets.env; set +a
+restic init
+asmgr backup run --dry-run
+asmgr backup run
+```
+
+`RESTIC_PASSWORD` 是读取所有快照的唯一密钥，初始化后必须保存到密码管理器或另一台设备。
+
+#### 自动运行
+
+`systemd/` 提供 user service 与 timer 示例，每天运行一次，并用随机延迟避免整点拥塞；
+`Persistent=true` 会在机器重新启动后补跑错过的任务。复制示例后按源码 checkout 和日志
+位置调整 service，再启用 timer：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/agent-session-manager.service.example ~/.config/systemd/user/agent-session-manager.service
+cp systemd/agent-session-manager.timer.example ~/.config/systemd/user/agent-session-manager.timer
+systemctl --user daemon-reload
+systemctl --user enable --now agent-session-manager.timer
+```
+
+同一个 restic 仓库只应由一台机器负责定时运行。需要在登出后继续执行时，为该用户启用
+systemd lingering。
 
 ## 从 live 目录之外读取会话
 
@@ -266,110 +310,6 @@ asmgr search "migration" --file /tmp/restored-cache
 
 **置信度**：`getTimelineEntries()` 用法、空会话消息、12 类筛选、`reasoningText` 不对称、上列 live-only 条目——置信度高；compaction 时的文件截断机制置信度较低，需对新版本复验。Copilot 升级后重跑[漂移探针](#drift-oracle)并查 unknown 诊断。
 
-## 备份配置
-
-`asmgr backup`（`backup.sh` 的薄封装）用 [restic](https://restic.net) 对 agent 历史做加密、去重、增量备份。部署相关的值（restic 仓库 URL、凭据、到存储后端的确切网络路径）都放在 `secrets.env`（gitignore、`600`）——不进被跟踪的文件，让仓库里没有内网 IP / 主机名（见下文[「公开前的安全检查」](#safety)）。
-
-### 备份什么
-
-`backup.sh` 读 `BACKUP_AGENT_DIRS`（默认 `~/.copilot:~/.claude:~/.codex`），备份其中存在的 agent 主目录。以 Copilot（`~/.copilot`）为例：
-
-| 路径 | 典型大小 | 是什么 | 是否备份 |
-|---|---|---|---|
-| `session-state/<id>/events.jsonl` | 大（合计 GB 级） | 持久化的每会话事件流——resume 时回放、并被 `asmgr` 映射成离线条目 | ✅ 核心 |
-| `session-state/<id>/{checkpoints,files,research}/` | 中小 | 每会话产物（检查点、附件、research 笔记） | ✅ |
-| `session-store.db` | 数十 MB | 全会话的 SQLite 索引（摘要、turns、文件 / 引用索引、FTS） | ✅ —— 先 checkpoint WAL 保证副本自洽 |
-| `session-store.db-wal` / `-shm` | 小 | SQLite WAL / 共享内存（热文件） | ❌ 排除（`exclude.txt`） |
-| `*.lock`（如 `inuse.<pid>.lock`） | 极小 | 运行时锁文件 | ❌ 排除（`exclude.txt`） |
-| `logs/` | 很大（GB 级） | CLI 进程日志 | ❌ 始终排除（`backup.sh` 里）——量大、恢复价值低 |
-| `session-state/<id>/rewind-snapshots/` | 大（GB 级） | 支撑 `/rewind` 撤销功能的快照 | ⚠️ 可选——`BACKUP_EXCLUDE_REWIND=1` 时排除 |
-| `config.json`、`settings.json`、`mcp-config.json`、`servers/` | 极小 | CLI + MCP 配置 | ✅ |
-
-Claude Code（`~/.claude`）与 Codex（`~/.codex`）主目录存在时整体备份。
-
-**`rewind-snapshots/` 为什么可选**：Copilot 的 `/rewind` 靠 `~/.copilot/session-state/<id>/rewind-snapshots/`（一个 `index.json` 加快照数据）撤销本会话的编辑。设 `BACKUP_EXCLUDE_REWIND=1` 把它们排除——省的空间比任何单项排除都多，且**不影响** `/share html`、`--resume`、`asmgr`（后两者从始终备份的 `events.jsonl` 重建）；唯一失去的是对**恢复出来的**会话执行 `/rewind` 的能力。
-
-### 端到端加密与架构
-
-restic 跑在**客户端**，在数据离开主机前做**端到端 AES-256 加密**，再写入 **S3 兼容端点**（`RESTIC_REPOSITORY=s3:<endpoint>/<bucket>`；任何 restic 后端都行——rustfs / MinIO / SeaweedFS / AWS S3 / B2 / R2 / 本地路径 / sftp / rest）。后端只见密文，存储主机被攻破也不暴露你的历史。
-
-反面：`RESTIC_PASSWORD` 是整个仓库**唯一**的钥匙——丢了它，所有快照永久不可读。`restic init` 后立刻把它抄进密码管理器 / 另一台设备。
-
-到端点可能要过若干网络跳转（如 mesh 覆盖网 → 主机端口代理 → WSL2 端口转发 → 容器端口）；这条跳转链是部署相关、含内网地址的，记在 `secrets.env` 头部注释里而**非**本文件——换机重新部署时只改 `secrets.env`，`backup.sh` / `exclude.txt` / 本文都是通用的。
-
-### 配置与运行
-
-复制模板、填入你自己的后端：
-
-```bash
-cp secrets.env.example secrets.env
-chmod 600 secrets.env
-```
-
-必填变量：
-
-| 变量 | 含义 |
-|---|---|
-| `RESTIC_REPOSITORY` | restic 仓库 URL，例如一个 S3 兼容桶 |
-| `RESTIC_PASSWORD` | restic 仓库的加密口令 |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 凭据，仅 S3 兼容后端需要 |
-
-可选变量：
-
-| 变量 | 默认值 |
-|---|---|
-| `RESTIC_BIN` | `$HOME/.local/bin/restic` |
-| `BACKUP_AGENT_DIRS` | `$HOME/.copilot:$HOME/.claude:$HOME/.codex` |
-| `BACKUP_EXCLUDE_REWIND` | 未设置；设为 `1` 跳过 Copilot rewind 快照 |
-
-首次初始化一个新的 restic 仓库：
-
-```bash
-set -a; source secrets.env; set +a
-restic init
-```
-
-然后运行：
-
-```bash
-asmgr backup run --dry-run
-asmgr backup run
-```
-
-把 `RESTIC_PASSWORD` 存进密码管理器或另一台设备。丢了它，加密备份就再也读不出来。
-
-### 保留策略
-
-每次运行给快照打 `agent-session-manager` + `$(hostname)` 标签，然后：
-
-```
-restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
-```
-
-> 迁移注记：快照标签历经 `session-recall` → `agent-session-exporter` → `agent-session-manager`。若把新 checkout 指向已有仓库，先对齐标签（如 `restic tag --set agent-session-manager --tag agent-session-exporter`，或加匹配的 `--keep-tag`），让 `forget` 按预期血缘 prune、而非遗弃旧快照。
-
-## 用 systemd 自动备份
-
-示例 unit 文件在 `systemd/`：
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/agent-session-manager.service.example ~/.config/systemd/user/agent-session-manager.service
-cp systemd/agent-session-manager.timer.example ~/.config/systemd/user/agent-session-manager.timer
-```
-
-编辑 `agent-session-manager.service`，把路径指向你的 checkout，然后：
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now agent-session-manager.timer
-systemctl --user list-timers agent-session-manager.timer
-```
-
-若希望登出后 timer 仍运行，请用你的系统管理员账户开启 user lingering。
-
-> 只应有**一台**机器拥有该 timer。若从旧部署迁来（unit 曾指向别的 checkout、或快照打的是旧标签如 `session-recall`），先禁用并删掉旧 unit（`systemctl --user disable --now <old>.timer` 再删文件），以免跑两份备份或把保留血缘劈成两半。
-
 ## 目录结构
 
 `asmgr` 是**一个** npm 包；下面的 `src/*` 是它的内部模块（相对 import 串联），不是各自发布的包。
@@ -383,7 +323,6 @@ systemctl --user list-timers agent-session-manager.timer
 | `scripts` | esbuild 单文件打包、bun 原生二进制、构建期资源内联（gen-assets） |
 | `fixtures` | 脱敏的解析器与 CLI fixtures |
 | [`tools/copilot`](tools/copilot/) | Copilot `/share` bundle 漂移探针（仅逆向研究，非运行时依赖） |
-| `backup.sh` | `asmgr backup` 用的 restic 封装 |
 
 ### <a id="drift-oracle"></a>漂移探针（`tools/copilot`）
 
