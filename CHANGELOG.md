@@ -1,3 +1,10 @@
+# [0.2.0](https://github.com/TMYTiMidlY/agent-session-manager/compare/v0.1.0...v0.2.0) (2026-08-18)
+
+
+### Features
+
+* support public ChatGPT share archives ([1107a0e](https://github.com/TMYTiMidlY/agent-session-manager/commit/1107a0e181c670bf6ed39d6ed9a8edd414b67878))
+
 # Changelog
 
 All notable changes to this project will be documented in this file. Versions and
