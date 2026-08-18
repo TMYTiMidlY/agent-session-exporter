@@ -7,19 +7,21 @@ import { buildShowCommand } from "./commands/show.js";
 import { buildHtmlCommand } from "./commands/html.js";
 import { buildMdCommand } from "./commands/md.js";
 import { buildBackupCommand } from "./commands/backup/index.js";
+import { buildImportCommand } from "./commands/import.js";
 
 /** Assemble the root `asmgr` program with every command attached. Exported so tests can drive it. */
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name(BIN_NAME)
-    .description("Search and render local coding-agent session histories")
+    .description("Search and render coding-agent sessions and public ChatGPT shares")
     .version(VERSION);
   program.addCommand(buildListCommand());
   program.addCommand(buildSearchCommand());
   program.addCommand(buildShowCommand());
   program.addCommand(buildHtmlCommand());
   program.addCommand(buildMdCommand());
+  program.addCommand(buildImportCommand());
   program.addCommand(buildBackupCommand());
   return program;
 }

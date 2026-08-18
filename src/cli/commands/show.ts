@@ -7,7 +7,7 @@ import { resolveOne } from "../options/resolve.js";
 
 export function buildShowCommand(): Command {
   const cmd = new Command("show")
-    .argument("[session-id]", "session id (optional when --file points at a single file)")
+    .argument("[session-id-or-url]", "会话 ID 或 ChatGPT 公开分享链接（--file 只有一个会话时可省略）")
     .description("Print a session as text, dialogue, or JSON");
   withAgent(cmd)
     .option("-f, --format <format>", "text|dialogue|json", "text")

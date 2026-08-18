@@ -59,6 +59,37 @@ describe("renderSessionHtml", () => {
     expect(html).toContain("tool-failure");
   });
 
+  it("renders ChatGPT labels, redacted tools, and source fidelity warnings", async () => {
+    const html = await renderSessionHtml({
+      agent: "chatgpt",
+      id: "shared",
+      path: "shared.chatgpt-share.json",
+      source: {
+        kind: "chatgpt-share",
+        path: "shared.chatgpt-share.json",
+        lossy: true,
+        warning: "来源已隐藏 2 条 ChatGPT 工具结果，原始输出无法恢复",
+      },
+      entries: [
+        { index: 0, role: "assistant", kind: "message", text: "answer" },
+        {
+          index: 1,
+          role: "tool",
+          kind: "tool",
+          text: "",
+          tool: {
+            name: "web.run",
+            arguments: { search_query: [{ q: "example" }] },
+            result: { type: "redacted", log: "原始输出已隐藏" },
+          },
+        },
+      ],
+    });
+    expect(html).toContain("ChatGPT");
+    expect(html).toContain("tool-redacted");
+    expect(html).toContain("来源已隐藏 2 条 ChatGPT 工具结果，原始输出无法恢复");
+  });
+
   it("renders subagent / skill / plan cards + pills (dredge-up parity)", async () => {
     const html = await renderSessionHtml(baseSession([
       { index: 0, role: "event", kind: "subagent", title: "Explore", text: "scout",

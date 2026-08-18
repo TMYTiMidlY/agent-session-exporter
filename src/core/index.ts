@@ -6,27 +6,47 @@ import type { AgentKind, AgentRoots, ParsedSession, SearchHit, SessionRef, Sessi
 import { discoverClaude, parseClaude } from "./adapters/claude.js";
 import { discoverCodex, parseCodex } from "./adapters/codex.js";
 import { discoverCopilot, parseCopilot } from "./adapters/copilot.js";
+import {
+  discoverChatGpt,
+  isChatGptShareSnapshot,
+  isHttpUrl,
+  parseChatGpt,
+  refFromChatGptFile,
+  refFromChatGptUrl,
+} from "./adapters/chatgpt.js";
 import { excerpt, stringifyInline, timelineEntrySearchText } from "./text.js";
-import { expandHome, fileStem, parentName, pathExists, readJsonl, walkFiles } from "./fs.js";
+import { expandHome, fileStem, parentName, pathExists, readJson, readJsonl, walkFiles } from "./fs.js";
 import { deriveProject } from "./project.js";
 
 export { timelineEntrySearchText };
 export { deriveProject };
 
-export const AGENTS: AgentKind[] = ["copilot", "claude", "codex"];
+export {
+  captureChatGptShare,
+  chatGptConversationId,
+  chatGptRoot,
+  chatGptSnapshotPath,
+  isHttpUrl,
+  parseChatGptShareUrl,
+  type ChatGptShareSnapshot,
+} from "./adapters/chatgpt.js";
+
+export const AGENTS: AgentKind[] = ["copilot", "claude", "codex", "chatgpt"];
 
 export async function discoverSessions(agents: AgentKind[] = AGENTS, roots: AgentRoots = {}): Promise<SessionRef[]> {
   const found: SessionRef[] = [];
   if (agents.includes("copilot")) found.push(...(await discoverCopilot(roots.copilot, roots.copilotDb)));
   if (agents.includes("claude")) found.push(...(await discoverClaude(roots.claude)));
   if (agents.includes("codex")) found.push(...(await discoverCodex(roots.codex)));
+  if (agents.includes("chatgpt")) found.push(...(await discoverChatGpt(roots.chatgpt)));
   return found.sort((a, b) => a.agent.localeCompare(b.agent) || a.id.localeCompare(b.id));
 }
 
 export async function parseSession(ref: SessionRef): Promise<ParsedSession> {
   if (ref.agent === "copilot") return parseCopilot(ref);
   if (ref.agent === "claude") return parseClaude(ref);
-  return parseCodex(ref);
+  if (ref.agent === "codex") return parseCodex(ref);
+  return parseChatGpt(ref);
 }
 
 export async function findSession(id: string, agents: AgentKind[] = AGENTS, roots: AgentRoots = {}): Promise<SessionRef | undefined> {
@@ -167,26 +187,66 @@ function deriveId(path: string, agent: AgentKind, rows: unknown[]): string {
   return fileStem(path);
 }
 
-/** Build a SessionRef from an explicit JSONL file, auto-detecting the agent. */
+/** Build a SessionRef from an explicit JSONL or ChatGPT snapshot file. */
 export async function refFromFile(path: string, agentOverride?: AgentKind): Promise<SessionRef> {
   const abs = expandHome(path);
+  let document: unknown;
+  let isJsonDocument = false;
+  if (!abs.endsWith(".jsonl")) {
+    try {
+      document = await readJson(abs);
+      isJsonDocument = true;
+    } catch {
+      // Non-standard JSONL filenames still fall through to row-based detection.
+    }
+  }
+  if (isJsonDocument) {
+    if (isChatGptShareSnapshot(document)) {
+      if (agentOverride && agentOverride !== "chatgpt") {
+        throw new Error(`该文件包含 ChatGPT 会话数据，与 --agent ${agentOverride} 不匹配：${path}`);
+      }
+      return refFromChatGptFile(abs);
+    }
+    const detected = detectAgent([document], abs);
+    if (!detected || detected === "chatgpt") {
+      throw new Error(`不支持的 JSON 会话格式：${path}`);
+    }
+    const agent = agentOverride ?? detected;
+    if (agent === "chatgpt") {
+      throw new Error(`该文件包含 ${detected} 会话数据，与 --agent chatgpt 不匹配：${path}`);
+    }
+    return { agent, id: deriveId(abs, agent, [document]), path: abs };
+  }
+  if (agentOverride === "chatgpt" || abs.endsWith(".chatgpt-share.json")) {
+    return refFromChatGptFile(abs);
+  }
   const rows = await readJsonl(abs);
-  const agent = agentOverride ?? detectAgent(rows, abs) ?? "copilot";
+  const agent = agentOverride ?? detectAgent(rows, abs);
+  if (!agent) throw new Error(`不支持的会话文件格式：${path}`);
+  if (agent === "chatgpt") return refFromChatGptFile(abs);
   return { agent, id: deriveId(abs, agent, rows), path: abs };
+}
+
+export function refFromUrl(value: string): SessionRef {
+  if (!isHttpUrl(value)) throw new Error(`无效的 URL：${value}`);
+  return refFromChatGptUrl(value);
 }
 
 /**
  * Discover sessions from an explicit filesystem path outside the live agent
- * homes: a single `*.jsonl` file, or a directory walked for `*.jsonl` files
- * (e.g. a restic-restored backup cache, or session files copied off another
- * machine). Each file's agent is auto-detected unless `agentOverride` is set.
+ * homes: one supported session file, or a directory walked for `*.jsonl` and
+ * `*.chatgpt-share.json` files (e.g. a restored backup cache). Each file's
+ * agent is auto-detected unless `agentOverride` is set.
  */
 export async function discoverPath(path: string, agentOverride?: AgentKind): Promise<SessionRef[]> {
   const abs = expandHome(path);
   if (!(await pathExists(abs))) throw new Error(`path not found: ${path}`);
   const info = await stat(abs);
   if (info.isFile()) return [await refFromFile(abs, agentOverride)];
-  const files = await walkFiles(abs, (candidate) => candidate.endsWith(".jsonl"));
+  const files = await walkFiles(
+    abs,
+    (candidate) => candidate.endsWith(".jsonl") || candidate.endsWith(".chatgpt-share.json"),
+  );
   const refs: SessionRef[] = [];
   for (const file of files) refs.push(await refFromFile(file, agentOverride));
   return refs.sort((a, b) => a.agent.localeCompare(b.agent) || a.id.localeCompare(b.id));
@@ -203,7 +263,8 @@ export const LOSSY_SOURCE_WARNING =
   "数据源回退到 db.turns (fallback) —— 交互式用户决策与工具条目在此模式下不可恢复";
 
 export function lossySourceWarning(source: SessionSource | undefined): string | undefined {
-  return source && (source.lossy || source.kind === "db-turns") ? LOSSY_SOURCE_WARNING : undefined;
+  if (!source || (!source.lossy && source.kind !== "db-turns")) return undefined;
+  return source.warning ?? LOSSY_SOURCE_WARNING;
 }
 
 export function sessionToText(session: ParsedSession): string {

@@ -112,6 +112,37 @@ describe("renderSessionMarkdown", () => {
     expect(out).toContain("### ❌ `bash`");
   });
 
+  it("labels ChatGPT responses and redacted tool results accurately", () => {
+    const out = renderSessionMarkdown({
+      ...session([]),
+      agent: "chatgpt",
+      source: {
+        kind: "chatgpt-share",
+        path: "share.json",
+        lossy: true,
+        warning: "来源已隐藏 1 条 ChatGPT 工具结果，原始输出无法恢复",
+      },
+      entries: [
+        { index: 0, role: "assistant", kind: "message", text: "answer" },
+        {
+          index: 1,
+          role: "tool",
+          kind: "tool",
+          text: "",
+          tool: {
+            name: "web.run",
+            arguments: { search_query: [{ q: "example" }] },
+            result: { type: "redacted", log: "原始输出已隐藏" },
+          },
+        },
+      ],
+    }, { exportedAt: fixedDate });
+    expect(out).toContain("# 🌀 ChatGPT 分享会话");
+    expect(out).toContain("### 💬 ChatGPT");
+    expect(out).toContain("### 🔒 `web.run`");
+    expect(out).toContain("来源已隐藏 1 条 ChatGPT 工具结果，原始输出无法恢复");
+  });
+
   it("injects --summary block above entries", () => {
     const out = renderSessionMarkdown(session([
       { index: 0, role: "user", kind: "message", text: "go", timestamp: "2026-01-01T00:00:10.000Z" },

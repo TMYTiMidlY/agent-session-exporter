@@ -5,13 +5,13 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.x-f69220?logo=pnpm&logoColor=white)
 ![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)
 
-**把编码 agent 的 CLI 会话导出成 Markdown 或单文件 HTML。** `asmgr`（Agent Session ManaGeR）只读地读取 GitHub Copilot CLI、Claude Code、OpenAI Codex CLI 写在本地的会话历史，再把选定的会话导出成一份忠实、自包含的报告。它是**一个**无 scope 的公开 npm 包，命令也叫 `asmgr`；HTML 与 Markdown 是它的导出能力，而非独立发布的产品。
+**把编码 agent 的 CLI 会话与公开 ChatGPT 分享导出成 Markdown 或单文件 HTML。** `asmgr`（Agent Session ManaGeR）读取 GitHub Copilot CLI、Claude Code、OpenAI Codex CLI 写在本地的会话历史，也可捕获公开 ChatGPT `/share/` 页面，再把选定的会话导出成自包含报告；来源无法完整保留的内容会显式标记。它是**一个**无 scope 的公开 npm 包，命令也叫 `asmgr`；HTML 与 Markdown 是它的导出能力，而非独立发布的产品。
 
 HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主题、sticky header、类型筛选 pill、侧栏目录、上一条/下一条用户消息跳转、搜索），差异见 [ADR 0003](docs/adr/0003-archive-reconstruction-fidelity.md)。Markdown 产物遵循 Copilot CLI `/share file` 的结构与约定（`### 💬/👤/🔧/✅` 标题、`<sub>⏱️</sub>` 耗时戳、`<details>` 折叠、diff 围栏、`[!NOTE]` 头块）。
 
-它对 agent 状态目录**只读**：不写 `.copilot`、`.claude`、`.codex`。读命令（`list` / `search` / `show` / `html` / `md`）都严格本地——从不联系任何云端或会话同步后端、从不通过网络拉取会话历史。（唯一走网络的是 `backup`：它按你配置的 restic 远端做备份 / 恢复。）
+它对 agent 状态目录**只读**：不写 `.copilot`、`.claude`、`.codex`。传本地 session id 或 `--file` 时，`list` / `search` / `show` / `html` / `md` 都严格本地。只有显式导入或直接读取 ChatGPT 分享 URL，以及按配置访问 restic 仓库的 `backup` 命令会联网。
 
-> **归档 ≠ 恢复。** 导出的报告是有损、只读、给人看的产物，**不能**反推回可 `--resume` 的原生会话。把会话忠实恢复到"另一台机器能续聊"是一条**规划中**的独立能力（来源 = 备份快照 ∪ 另一台机器），与只读归档严格分层——理念见 [ADR 0001](docs/adr/0001-scope-archive-and-restore.md) 与 [ADR 0004](docs/adr/0004-restore-fidelity-and-safety.md)。
+> **归档 ≠ 恢复。** 导出的报告是有损、只读、给人看的产物，**不能**反推回可 `--resume` 的原生会话。把会话忠实恢复到"另一台机器能续聊"是一条**规划中**的独立能力（来源 = 备份快照 ∪ 另一台机器），与只读归档严格分层——理念见 [ADR 0001](docs/adr/0001-scope-archive-and-restore.md)。
 
 ## 功能
 
@@ -22,11 +22,14 @@ HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主�
 | 在单个会话内搜索 | `asmgr search "关键词" --session <session-id>` |
 | 打印一个会话 | `asmgr show <session-id> --agent claude` |
 | 只看对话主干（跳过工具调用） | `asmgr show <session-id> --format dialogue` |
+| 导入公开 ChatGPT 分享 | `asmgr import 'https://chatgpt.com/share/<id>'` |
+| 直接读取 ChatGPT 分享主干 | `asmgr show 'https://chatgpt.com/share/<id>' --format dialogue` |
 | 导出 Markdown（Copilot `/share file` 风格） | `asmgr md <session-id> -o session.md` |
 | 导出 HTML（高度复刻 `/share html`） | `asmgr html <session-id> -o session.html` |
+| 直接把 ChatGPT 分享导出 HTML | `asmgr html 'https://chatgpt.com/share/<id>' -o session.html` |
 | 读取任意位置的会话文件（scp 来的 / 恢复出来的） | `asmgr html --file /path/to/events.jsonl -o session.html` |
-| 搜索恢复出来的备份缓存目录 | `asmgr search "关键词" --file /path/to/restored-cache` |
-| 运行备份（restic 封装） | `asmgr backup run --dry-run` |
+| 搜索任意位置的会话目录 | `asmgr search "关键词" --file /path/to/sessions` |
+| 运行加密增量备份 | `asmgr backup run --dry-run` |
 | 把备份快照恢复到隔离缓存 | `asmgr backup cache latest --target ~/.cache/asmgr/restic-cache` |
 
 ## 支持的 agent 与数据来源
@@ -34,21 +37,33 @@ HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主�
 - **Copilot CLI**：读取 `~/.copilot/session-state/*/events.jsonl`；同时用 `~/.copilot/session-store.db` 列出会话与元信息。events.jsonl 缺失（老会话被 prune、或只迁移了 DB）时回退到 DB 的 `turns` 表（lossy：只有 user/assistant 文本，工具与用户决策不可恢复）。所有读命令可用 `--copilot-db <path>` 覆盖 DB 路径。
 - **Claude Code**：读取 `~/.claude/projects/**/*.jsonl`
 - **Codex CLI**：读取 `~/.codex/sessions/**/*.jsonl`
+- **ChatGPT 公共分享**：`asmgr import <url>` 从 `/share/<id>` 页面的 React Router 水合数据读取
+  `linear_conversation`。默认托管目录中的快照会自动进入 `list/search/show/html/md`；
+  也可把 URL 直接传给 `show/html/md`，不落盘使用。
 
-每个读命令（`list` / `search` / `show` / `html` / `md`）都接受 `--file <path>`（别名 `--events <path>`），读一个显式的 `*.jsonl` 文件——或一个会被遍历出这些文件的目录——而不是 live agent 主目录。每个文件的 agent 格式自动探测（用 `--agent` 覆盖）。这就是渲染从别的机器拷来的会话、或搜索 restic 恢复出来的备份缓存（无需先放回 `~/.copilot`）的方式。
+每个读命令（`list` / `search` / `show` / `html` / `md`）都接受 `--file <path>`（别名 `--events <path>`），读一个显式的 `*.jsonl` / `*.chatgpt-share.json` 文件——或一个会被遍历出这些文件的目录——而不是 live agent 主目录。每个文件的 agent 格式自动探测（用 `--agent` 覆盖）。未知 JSON 会明确报错，不再静默显示成空会话。
 
 ## <a id="install"></a>安装
 
-四种方式，按摩擦从低到高。`asmgr` 是单一、无 scope 的公开 npm 包。
+`asmgr` 已发布为单一、无 scope 的公开 npm 包：
 
-### npm（发布到 registry 后）
+### npm
 
 ```bash
 npm i -g asmgr
 asmgr list --agent all
 ```
 
-> 发布由手动触发的 CI（semantic-release）驱动。registry 上线前，请用下面任一方式。
+各安装方式当前能力如下：
+
+| 安装方式 | 读取、搜索、导入与导出 | `asmgr backup` |
+|---|---|---|
+| npm / `npm i -g github:` | ✅ | ❌ 暂未包含备份运行时 |
+| 原生二进制 | ✅，但不读取 Copilot live SQLite | ❌ 暂未包含备份运行时 |
+| 源码 checkout | ✅ | ✅ |
+
+<details>
+<summary>其他安装方式与运行时差异</summary>
 
 ### 原生二进制（无需 Node）
 
@@ -93,6 +108,8 @@ asmgr list --agent all
 
 开发时直接跑源码：`pnpm dev list --agent all`（经 tsx）。自行编译原生二进制（需要 [Bun](https://bun.sh)）：`pnpm run binaries`，四平台产物落在 `dist/asmgr-*`。
 
+</details>
+
 ## 首次运行
 
 1. 按上面任一方式装好 `asmgr`。
@@ -128,7 +145,7 @@ asmgr list --agent claude --claude-root /path/to/claude/projects
 
 ```bash
 asmgr list --by project     # 按仓库聚类会话
-asmgr list --by agent       # 按 copilot / claude / codex 分组
+asmgr list --by agent       # 按 copilot / claude / codex / chatgpt 分组
 ```
 
 分组模式每组打印一个 `# <组> (<数量>)` 头（组间排序，组内按最后活动时间从新到旧），随后是 `组`、`agent`、`session-id`、`最后活动`、`条目数` 的 tab 分隔行。
@@ -146,6 +163,47 @@ asmgr search "database migration" --session <session-id>   # 只在一个会话�
 
 `--session <id>` 把搜索限定到一个会话（先精确匹配 id，否则按前缀匹配）——用来在**当前这个会话**里按关键词找模型回复，不必先用 `--file` 指路径。
 
+### `asmgr import`
+
+导入公开 ChatGPT 分享页：
+
+```bash
+asmgr import 'https://chatgpt.com/share/<conversation-id>'
+```
+
+默认写入 asmgr 托管目录，随后可直接用 session id 执行 `list/search/show/html/md`。
+也可以把分享 URL 直接传给 `show/html/md`，跳过本地保存。
+
+<details>
+<summary>ChatGPT 存储路径、输出方式与保真限制</summary>
+
+托管目录优先使用 `ASMGR_DATA_HOME`，其次使用 `XDG_DATA_HOME`；都未设置时按平台选择：
+
+| 平台 | 默认目录 |
+|---|---|
+| Linux | `~/.local/share/asmgr/imports/chatgpt` |
+| macOS | `~/Library/Application Support/asmgr/imports/chatgpt` |
+| Windows | `%LOCALAPPDATA%\asmgr\imports\chatgpt` |
+
+三种写入方式的后续读取不同：
+
+| 导入方式 | 后续读取 |
+|---|---|
+| 默认目录 | 自动进入 `list/search/show/html/md` |
+| `--chatgpt-root <dir>` | 后续读命令继续传相同的 `--chatgpt-root` |
+| `-o <path>` | 用 `--file <path>` 显式读取；若改为扫描目录，文件名需以 `.chatgpt-share.json` 结尾 |
+
+新快照权限为 `0600`；目标已存在时拒绝覆盖，确认要刷新才加 `--force`。普通 ChatGPT 页面、私有
+`/c/...`、`/g/.../c/...` 地址栏会话及其它网站 URL 都不会发起抓取：检测到地址栏私有
+会话链接时，会用中文明确提示先在 ChatGPT 中点击“分享”，再复制 `/share/` 链接。
+
+捕获不启动浏览器：直接解码页面 HTML 内的 turbo-stream 水合数据。快照保留完整公开
+`linear_conversation`，便于未来适配器改进后重新解析。公开页隐藏的工具结果无法恢复；
+图片或附件若只有资源指针而没有内容，会显示占位符并把来源标记为 lossy。工具调用与结果
+只有在同一用户轮次内存在唯一匹配时才合并，关联不明确时保留独立结果或 pending 状态。
+
+</details>
+
 ### `asmgr show`
 
 以 text、dialogue 或 JSON 打印一个会话：
@@ -154,20 +212,30 @@ asmgr search "database migration" --session <session-id>   # 只在一个会话�
 asmgr show <session-id> --agent codex
 asmgr show <session-id> --agent copilot --format dialogue
 asmgr show <session-id> --agent codex --format json
+asmgr show 'https://chatgpt.com/share/<id>' --format dialogue
 ```
 
 `--format dialogue` 只保留**用户消息 / 用户决策（`ask_user` 的回答）/ 压缩摘要 / 助手回复**，跳过工具调用与 reasoning。工具噪音被剔掉后，每条用户 prompt 直接紧跟回答它的助手回复，prompt↔回复的对应关系一目了然——适合会话复盘、交接和收尾盘点等需要通读对话主干的场景。`--format text` 则含完整工具参数+结果、子代理/技能/计划/压缩统计。
 
 ### `asmgr html`
 
-写出一份自包含 HTML 报告。它高度贴合 Copilot CLI `/share html`（sticky header、筛选 pill、侧栏目录、搜索、展开/折叠、上一条/下一条用户消息跳转、主题切换、紧凑模式、Markdown 表格、KaTeX 数学），但不是逐像素/逐字节一致。有意为之的差异：
+写出一份自包含 HTML 报告，支持搜索、筛选、侧栏目录、主题切换、Markdown 表格与 KaTeX 数学：
+
+```bash
+asmgr html <session-id> --agent copilot -o report.html
+asmgr html <session-id> -s agent-summary.html -o report.html   # 顶部钉一份 HTML 总结
+asmgr html 'https://chatgpt.com/share/<id>' -o report.html
+```
+
+<details>
+<summary>HTML 与 Copilot CLI `/share html` 的差异</summary>
 
 - **用 React 渲染，而非官方 vanilla bundle 资产。** 抽取的上游 CSS/JS 只当逆向参照，不随运行时产物发布。
 - **Shiki 语法高亮**，覆盖 markdown 代码围栏与 diff 风格的工具输出，双 light+dark 主题，页面切主题时代码无需重载即重新着色。
 - **24 小时制时间戳**（会话起点 `YYYY-MM-DD HH:MM:SS`；同日条目 `HH:MM:SS`，跨日 `MM-DD HH:MM:SS`）——en-US 默认的 12 小时制（`PM/AM`）太容易读错。
 - **耗时 pill**，由 `startedAt` → 最后一条条目算出，显示在 header。
 - **agent 总结卡片**，用 `--summary <file.html>` 钉在时间线顶部（原样渲染受信任 HTML；`data-index="summary"`，真实第 1 条仍是第 1 条）。
-- **合并的工具卡片**，五种结果态（success / failure / rejected / denied / pending），配对应的边框色与状态图标。
+- **合并的工具卡片**，六种结果态（success / failure / rejected / denied / pending / redacted），配对应的边框色与状态图标。
 - **`ask_user` 的回答被抽成一等「用户决策」条目**（`user/decision`）：既保留原始工具卡片，又让用户的选择/回答在时间线里单独、显眼地出现——复盘或交接时不会把决策埋没在成百上千次工具调用里。
 - **子代理 / 技能 / 计划条目**，从 `events.jsonl` 解析、各自成卡片 + 筛选 pill。子代理卡片在可得时显示记录到的身份、模型、描述、失败详情。这些超出 Copilot 自身 `/share html` 的筛选集。
 - **数据源回退警告 pill**，当解析器不得不读 `events.jsonl` 之外的东西时显示在 header；回退到 `db.turns` 时进一步说明「交互式用户决策与工具条目在此模式下不可恢复」。
@@ -175,10 +243,7 @@ asmgr show <session-id> --agent codex --format json
 - **单行 info 条目**（模型切换 / 取消）默认展开而非折叠——与官方 bundle 不同，让「Model changed from X to Y」「Operation cancelled by user」这类一行信息一眼可见；多行 info 仍折叠。
 - **只存在于 live 内存的条目离线无法重建**，包括吉祥物启动横幅、临时重试提示、`/share` 成功回执。见 [ADR 0003](docs/adr/0003-archive-reconstruction-fidelity.md) 与下文[「Copilot 时间线与离线映射」](#timeline-ref)。
 
-```bash
-asmgr html <session-id> --agent copilot -o report.html
-asmgr html <session-id> -s agent-summary.html -o report.html   # 顶部钉一份 HTML 总结
-```
+</details>
 
 ### `asmgr md`
 
@@ -188,6 +253,7 @@ asmgr html <session-id> -s agent-summary.html -o report.html   # 顶部钉一份
 asmgr md <session-id> --agent copilot -o report.md
 asmgr md <session-id> --no-reasoning -o report.md             # 去掉 reasoning 条目
 asmgr md <session-id> -s summary.md -o report.md              # 注入一份 markdown 总结
+asmgr md 'https://chatgpt.com/share/<id>' -o report.md
 ```
 
 ### `asmgr backup`
@@ -200,17 +266,21 @@ asmgr backup run
 asmgr backup cache latest --target ~/.cache/asmgr/restic-cache
 ```
 
-`backup run` 默认备份 `~/.copilot`、`~/.claude` 与 `~/.codex`，只处理实际存在的路径。
-运行时会先尽力把 Copilot 的 SQLite WAL 合入主库，再执行加密、去重、增量备份；
-SQLite 热文件、锁文件和 Copilot 进程日志不会进入快照。每次快照带
-`agent-session-manager` 与当前主机标签，并应用 daily / weekly / monthly 保留策略。
+`backup run` 默认备份 `~/.copilot`、`~/.claude`、`~/.codex` 与 asmgr 托管的 ChatGPT
+导入目录，只处理实际存在的路径。运行时会先尽力把 Copilot 的 SQLite WAL 合入主库，
+再执行加密、去重、增量备份；SQLite 热文件、锁文件和 Copilot 进程日志不会进入快照。
+每次快照带 `agent-session-manager` 与当前主机标签，并应用 daily / weekly / monthly
+保留策略。
 
 `backup cache` 把指定快照恢复到独立缓存，明确拒绝 home 目录及 live 的
-`~/.copilot`、`~/.claude`、`~/.codex`。缓存用于 `list/search/show/html/md --file`，
-不等于把会话恢复成原 agent 可以 `--resume` 的状态。可用 `--host <host>` 限定快照
-主机，或用 `--dry-run` 只打印恢复命令。
+`~/.copilot`、`~/.claude`、`~/.codex`，也拒绝 asmgr 托管的 ChatGPT 导入目录。
+缓存用于 `list/search/show/html/md --file`，不等于把会话恢复成原 agent 可以
+`--resume` 的状态。
 
 > 当前备份命令需要从源码 checkout 运行；npm 包和原生二进制尚未包含备份运行时。
+
+<details>
+<summary>备份配置与 systemd 自动运行</summary>
 
 #### 配置
 
@@ -224,7 +294,8 @@ chmod 600 secrets.env
 必填项是 `RESTIC_REPOSITORY` 与 `RESTIC_PASSWORD`；S3 兼容后端还需要
 `AWS_ACCESS_KEY_ID` 和 `AWS_SECRET_ACCESS_KEY`。可用 `RESTIC_BIN` 覆盖 restic
 位置、用 `BACKUP_AGENT_DIRS` 调整数据源、用 `BACKUP_EXCLUDE_REWIND=1` 排除
-Copilot rewind 快照。
+Copilot rewind 快照。通过 `--chatgpt-root` 或 `-o` 放到其它位置的 ChatGPT 快照不会
+自动进入备份，需要显式加入 `BACKUP_AGENT_DIRS`。
 
 新仓库先加载配置并初始化，再运行备份：
 
@@ -254,18 +325,21 @@ systemctl --user enable --now agent-session-manager.timer
 同一个 restic 仓库只应由一台机器负责定时运行。需要在登出后继续执行时，为该用户启用
 systemd lingering。
 
+</details>
+
 ## 从 live 目录之外读取会话
 
-`--file <path>`（别名 `--events <path>`）让 `list` / `search` / `show` / `html` / `md` 读一个显式路径，而不是 `~/.copilot`、`~/.claude`、`~/.codex`：
+`--file <path>`（别名 `--events <path>`）让 `list` / `search` / `show` / `html` / `md` 读一个显式路径，而不是 live agent / import 主目录：
 
 ```bash
 # 从别的机器拷来的单个会话文件（agent 自动探测）
 asmgr show --file ~/dl/events.jsonl --format json
 asmgr html --file ~/dl/events.jsonl -o report.html
+asmgr show --file ~/dl/conversation.chatgpt-share.json --format dialogue
 
-# 整个目录（遍历 *.jsonl；每个文件各自探测 agent）
-asmgr list --file /tmp/restored-cache
-asmgr search "migration" --file /tmp/restored-cache
+# 整个目录（遍历 *.jsonl / *.chatgpt-share.json；每个文件各自探测 agent）
+asmgr list --file /tmp/session-archive
+asmgr search "migration" --file /tmp/session-archive
 ```
 
 `--file` 指向单个文件时，`<session-id>` 参数可省。指向的目录若产出多个会话，传一个 `<session-id>` 挑一个（用 `asmgr list --file <dir>` 看 id）。
@@ -273,21 +347,23 @@ asmgr search "migration" --file /tmp/restored-cache
 ## 术语
 
 - **会话（Session）**：agent CLI 持久化的一次对话，可由 UUID、JSONL 路径，或某 agent 本地数据库中的一行标识。
-- **agent 适配器（Adapter）**：知道如何发现并解析某一家 agent 持久化格式的代码。当前适配 GitHub Copilot CLI、Claude Code、OpenAI Codex CLI。
+- **agent 适配器（Adapter）**：知道如何发现并解析某一家 agent 持久化格式的代码。当前适配 GitHub Copilot CLI、Claude Code、OpenAI Codex CLI 与 ChatGPT 公共分享快照。
 - **事件（Event）**：agent 持久化流里的一条原始记录。Copilot 的事件存在 `events.jsonl`，是离线时间线重建的输入，而非 live `/share html` 直接渲染的对象。
 - **时间线条目（Timeline entry）**：时间线里的一个展示单元（用户消息、助手回复、reasoning 块、工具调用等）。Copilot 把 live 条目放内存里；`asmgr` 从持久化事件重建规范化条目，供搜索与渲染共用。
 - **归档（Archive / 只读检索）**：`asmgr` 只读地取回历史会话——搜索、文本显示、JSON 导出、给人看的 HTML/Markdown。归档**从不**把会话恢复回原 agent 的 live 状态。
 - **恢复（Restore）**：忠实重建**可 `--resume` 的原生会话状态**（规划中）。**归档 ≠ 恢复**：报告不可反推回可续聊的原生态。
-- **归档源（Archive source）**：可读取会话文件的地方——包括 live 本地 agent 目录，以及从 restic 恢复出来的备份缓存。
+- **归档源（Archive source）**：可读取会话文件的地方——包括 live 本地 agent 目录，以及通过 `--file` 显式指定的文件或目录。
 
 ## 设计文档（ADR）
 
 重要决策的理念记录在 [`docs/adr/`](docs/adr/)：
 
-- [ADR 0001](docs/adr/0001-scope-archive-and-restore.md) —— 范围、双面能力与"归档 ≠ 恢复"。
-- [ADR 0002](docs/adr/0002-single-package-asmgr-distribution.md) —— 单一 `asmgr` 包、能力而非产品、分发与发布。
-- [ADR 0003](docs/adr/0003-archive-reconstruction-fidelity.md) —— 归档侧：从 `events.jsonl` 离线重建的保真度模型。
-- [ADR 0004](docs/adr/0004-restore-fidelity-and-safety.md) —— 恢复侧：忠实迁移的保真度与破坏性操作安全。
+- [ADR 0001](docs/adr/0001-scope-archive-and-restore.md) —— 产品范围与"归档 ≠ 恢复"。
+- [ADR 0002](docs/adr/0002-single-package-asmgr-distribution.md) —— 单一 `asmgr` 包与统一命令入口。
+- [ADR 0003](docs/adr/0003-archive-reconstruction-fidelity.md) —— 归档数据的规范化与保真度。
+
+<details>
+<summary>实现参考：Copilot 时间线、目录结构与漂移探针</summary>
 
 ## <a id="timeline-ref"></a>Copilot 时间线与离线映射（参考）
 
@@ -334,9 +410,15 @@ node tools/copilot/extract-share-assets.cjs [path/to/@github/copilot/app.js] [ou
 
 **为什么保留**：它是**漂移探针**。Copilot 升级可能改动时间线条目 / 筛选类、Primer 明暗主题规则、按钮 id 等 DOM 钩子。升级后重跑并 diff 上一次输出，把有意义的变化当作"复核离线事件映射与 React 渲染器"的提示，而不是自动搬进产物。维护中的 HTML 渲染器是 `src/html` 的 React 实现，不 import 也不发布这些抽取资产；仓库里目前没有大小 / 哈希基线，可在下次比较时记录探针打印的长度与本地校验和。
 
+</details>
+
+<details>
+<summary>同类项目调研与差异</summary>
+
 ## 同类项目对比
 
-这个问题空间很拥挤——至少 14 个 OSS 项目瞄准相近方向，其中几个 star 数可观，至少一个出自知名开源作者。设计本工具前我们调研过它们，并在本地 `readonly-repos/<name>/` 各留一份只读镜像备查。
+这个问题空间已有多种 CLI、TUI、Web 与桌面实现。下表是 2026-07-24 整理文档时的调研快照；
+Stars 只反映当时状态，不作为持续更新的排名。
 
 | 仓库 | Stars | 语言 | 形态 | 覆盖 agent | 备注 |
 |---|---:|---|---|---|---|
@@ -367,6 +449,11 @@ node tools/copilot/extract-share-assets.cjs [path/to/@github/copilot/app.js] [ou
 
 这些灵感项都作为 GitHub issue 跟踪（每条写明 `Inspired by …`），见 [issues](https://github.com/TMYTiMidlY/agent-session-manager/issues)：项目层级索引页（`claude-code-log`）、Token / 成本分析视图（`token-dashboard`）、实时 tail 模式（`claude-code-trace` / `tail-claude`）、按项目分组侧栏（`agent-session-viewer` / `codex-history-viewer`）、VS Code 扩展封装（`codex-history-viewer`）、Pages 静态导出 tarball（`claude-code-transcripts`）。
 
+</details>
+
+<details>
+<summary>维护者：公开前安全检查</summary>
+
 ## <a id="safety"></a>公开前的安全检查
 
 把本仓库推到任何公开位置前，只检查被跟踪的文件：
@@ -376,13 +463,15 @@ git ls-files
 git grep -nE 'PRIVATE|SECRET|TOKEN|PASSWORD|AKIA|/(h[o]me|Users)/|10\\.|192\\.168\\.|172\\.|D[E]SKTOP|[Ww]orkstation'
 ```
 
-`secrets.env`、`backup.log`、`node_modules/`、构建产物都被忽略，应保持未跟踪。
+`secrets.env`、`backup.log`、`node_modules/` 与构建产物都被忽略，应保持未跟踪。
+
+</details>
 
 ## <a id="roadmap"></a>路线图
 
 待办与灵感项都在 [GitHub issues](https://github.com/TMYTiMidlY/agent-session-manager/issues) 跟踪。两条值得单独点名的方向：
 
-- **忠实恢复 / 迁移**：把会话恢复到"另一台机器能 `--resume`"的原生状态（来源 = 备份快照 ∪ 另一台机器）——理念见 [ADR 0001](docs/adr/0001-scope-archive-and-restore.md) 与 [ADR 0004](docs/adr/0004-restore-fidelity-and-safety.md)。
-- **本地 Web 界面 `asmgr web`**：本机启动、仅供自己查看、默认只绑 `127.0.0.1` 的会话浏览界面，随同一个包分发——见 [ADR 0002](docs/adr/0002-single-package-asmgr-distribution.md)。
+- **忠实恢复 / 迁移**：把会话恢复到"另一台机器能 `--resume`"的原生状态（来源 = 备份快照 ∪ 另一台机器）——边界见 [ADR 0001](docs/adr/0001-scope-archive-and-restore.md)。
+- **本地 Web 界面 `asmgr web`**：本机启动、仅供自己查看的会话浏览界面。
 
-单文件分发与 npm 发布**已实现**（单一无 scope 包 `asmgr`、四平台原生二进制、semantic-release、`npm i -g github:` 免 registry 安装）——详见[安装](#install)。其余（持久化索引搜索恢复出来的备份、提升适配器保真度、项目层级索引页、Token / 成本视图、实时 tail、VS Code 扩展、Pages 导出 tarball、跨多会话仪表盘）见 issues。
+单文件分发与 npm 发布**已实现**（单一无 scope 包 `asmgr`、四平台原生二进制、semantic-release、`npm i -g github:` 免 registry 安装）——详见[安装](#install)。其余（持久化索引外部会话目录、提升适配器保真度、项目层级索引页、Token / 成本视图、实时 tail、VS Code 扩展、Pages 导出 tarball、跨多会话仪表盘）见 issues。

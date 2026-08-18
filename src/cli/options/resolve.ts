@@ -4,6 +4,8 @@ import {
   discoverSessions,
   findSession,
   findSessionAmong,
+  isHttpUrl,
+  refFromUrl,
   type AgentKind,
   type AgentRoots,
   type SessionRef,
@@ -12,7 +14,7 @@ import { BIN_NAME } from "../brand.js";
 
 export function parseAgents(value: string): AgentKind[] {
   if (value === "all") return AGENTS;
-  if (value === "copilot" || value === "claude" || value === "codex") return [value];
+  if (value === "copilot" || value === "claude" || value === "codex" || value === "chatgpt") return [value];
   throw new Error(`unknown agent: ${value}`);
 }
 
@@ -32,6 +34,7 @@ export function rootsFromOptions(opts: Record<string, unknown>): AgentRoots {
     copilotDb: typeof opts.copilotDb === "string" ? opts.copilotDb : undefined,
     claude: typeof opts.claudeRoot === "string" ? opts.claudeRoot : undefined,
     codex: typeof opts.codexRoot === "string" ? opts.codexRoot : undefined,
+    chatgpt: typeof opts.chatgptRoot === "string" ? opts.chatgptRoot : undefined,
   };
 }
 
@@ -45,6 +48,14 @@ export async function resolveRefs(opts: Record<string, unknown>): Promise<Sessio
 /** Resolve exactly one session for show/html/md. */
 export async function resolveOne(id: string | undefined, opts: Record<string, unknown>): Promise<SessionRef> {
   const file = filePathFromOptions(opts);
+  if (id && isHttpUrl(id)) {
+    if (file) throw new Error("会话链接不能与 --file 同时使用");
+    const agent = String(opts.agent ?? "all");
+    if (agent !== "all" && agent !== "chatgpt") {
+      throw new Error("会话链接仅支持 --agent chatgpt");
+    }
+    return refFromUrl(id);
+  }
   if (file) {
     const refs = await discoverPath(file, agentOverrideFromOptions(opts));
     if (refs.length === 0) throw new Error(`no sessions found in --file path: ${file}`);

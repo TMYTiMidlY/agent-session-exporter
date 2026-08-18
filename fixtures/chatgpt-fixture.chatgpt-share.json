@@ -1,0 +1,191 @@
+{
+  "format": "asmgr.chatgpt-share",
+  "version": 1,
+  "capturedAt": "2026-08-17T00:00:00.000Z",
+  "requestedUrl": "https://chatgpt.com/share/chatgpt-fixture",
+  "sourceUrl": "https://chatgpt.com/share/chatgpt-fixture",
+  "data": {
+    "title": "ChatGPT fixture",
+    "conversation_id": "chatgpt-fixture",
+    "default_model_slug": "gpt-test",
+    "create_time": 1767225600,
+    "update_time": 1767225660,
+    "is_public": true,
+    "linear_conversation": [
+      {
+        "id": "system-node",
+        "parent": null,
+        "children": ["preamble-node"],
+        "message": {
+          "id": "system-message",
+          "author": { "role": "system", "name": null },
+          "recipient": "all",
+          "content": {
+            "content_type": "text",
+            "parts": ["Public system context"]
+          },
+          "create_time": 1767225600,
+          "metadata": {}
+        }
+      },
+      {
+        "id": "preamble-node",
+        "parent": "system-node",
+        "children": ["user-node"],
+        "message": {
+          "id": "preamble-message",
+          "author": { "role": "assistant", "name": null },
+          "recipient": "all",
+          "content": {
+            "content_type": "text",
+            "parts": ["Shared conversation preamble"]
+          },
+          "create_time": 1767225605,
+          "metadata": {}
+        }
+      },
+      {
+        "id": "user-node",
+        "parent": "preamble-node",
+        "children": ["redacted-node"],
+        "message": {
+          "id": "user-message",
+          "author": { "role": "user", "name": null },
+          "recipient": "all",
+          "content": {
+            "content_type": "text",
+            "parts": ["Find the answer"]
+          },
+          "create_time": 1767225610,
+          "metadata": {
+            "turn_exchange_id": "turn-one"
+          }
+        }
+      },
+      {
+        "id": "redacted-node",
+        "parent": "user-node",
+        "children": ["tool-call-node"],
+        "message": {
+          "id": "redacted-result",
+          "author": { "role": "tool", "name": "web.run" },
+          "recipient": "all",
+          "content": {
+            "content_type": "text",
+            "parts": ["The output of this plugin was redacted."]
+          },
+          "create_time": 1767225620,
+          "metadata": {
+            "is_redacted": true,
+            "turn_exchange_id": "turn-one"
+          }
+        }
+      },
+      {
+        "id": "tool-call-node",
+        "parent": "redacted-node",
+        "children": ["thought-node"],
+        "message": {
+          "id": "tool-call",
+          "author": { "role": "assistant", "name": null },
+          "recipient": "web.run",
+          "content": {
+            "content_type": "code",
+            "parts": ["{\"search_query\":[{\"q\":\"fixture query\"}]}"]
+          },
+          "create_time": 1767225630,
+          "metadata": {
+            "turn_exchange_id": "turn-one",
+            "search_display_string": "Searching the web"
+          }
+        }
+      },
+      {
+        "id": "thought-node",
+        "parent": "tool-call-node",
+        "children": ["assistant-node"],
+        "message": {
+          "id": "thought-message",
+          "author": { "role": "assistant", "name": null },
+          "recipient": "all",
+          "content": {
+            "content_type": "thoughts",
+            "thoughts": [
+              {
+                "summary": "Checking sources",
+                "content": "Comparing the available evidence."
+              }
+            ]
+          },
+          "create_time": 1767225640,
+          "metadata": {
+            "turn_exchange_id": "turn-one"
+          }
+        }
+      },
+      {
+        "id": "assistant-node",
+        "parent": "thought-node",
+        "children": ["user-two-node"],
+        "message": {
+          "id": "assistant-message",
+          "author": { "role": "assistant", "name": null },
+          "recipient": "all",
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["The final answer."]
+          },
+          "create_time": 1767225650,
+          "metadata": {
+            "turn_exchange_id": "turn-one",
+            "model_slug": "gpt-test",
+            "citations": [
+              {
+                "title": "Fixture source",
+                "url": "https://example.com/source"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "user-two-node",
+        "parent": "assistant-node",
+        "children": ["assistant-two-node"],
+        "message": {
+          "id": "user-two-message",
+          "author": { "role": "user", "name": null },
+          "recipient": "all",
+          "content": {
+            "content_type": "text",
+            "parts": ["Summarize it"]
+          },
+          "create_time": 1767225655,
+          "metadata": {
+            "turn_exchange_id": "turn-two"
+          }
+        }
+      },
+      {
+        "id": "assistant-two-node",
+        "parent": "user-two-node",
+        "children": [],
+        "message": {
+          "id": "assistant-two-message",
+          "author": { "role": "assistant", "name": null },
+          "recipient": "all",
+          "content": {
+            "content_type": "text",
+            "parts": ["Short summary."]
+          },
+          "create_time": 1767225660,
+          "metadata": {
+            "turn_exchange_id": "turn-two",
+            "model_slug": "gpt-test"
+          }
+        }
+      }
+    ]
+  }
+}

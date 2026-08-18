@@ -11,7 +11,16 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -a; source "$DIR/secrets.env"; set +a
 
 RESTIC="${RESTIC_BIN:-$HOME/.local/bin/restic}"
-BACKUP_AGENT_DIRS="${BACKUP_AGENT_DIRS:-$HOME/.copilot:$HOME/.claude:$HOME/.codex}"
+if [ -n "${ASMGR_DATA_HOME:-}" ]; then
+  ASMGR_CHATGPT_IMPORT_DIR="$ASMGR_DATA_HOME/asmgr/imports/chatgpt"
+elif [ -n "${XDG_DATA_HOME:-}" ]; then
+  ASMGR_CHATGPT_IMPORT_DIR="$XDG_DATA_HOME/asmgr/imports/chatgpt"
+elif [ "$(uname -s)" = "Darwin" ]; then
+  ASMGR_CHATGPT_IMPORT_DIR="$HOME/Library/Application Support/asmgr/imports/chatgpt"
+else
+  ASMGR_CHATGPT_IMPORT_DIR="$HOME/.local/share/asmgr/imports/chatgpt"
+fi
+BACKUP_AGENT_DIRS="${BACKUP_AGENT_DIRS:-$HOME/.copilot:$HOME/.claude:$HOME/.codex:$ASMGR_CHATGPT_IMPORT_DIR}"
 
 DRYRUN=""
 [ "${1:-}" = "--dry-run" ] && DRYRUN="--dry-run"

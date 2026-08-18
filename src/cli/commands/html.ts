@@ -10,7 +10,7 @@ import { parseSummaryFormat, sourceLabelForSession, summaryMismatchWarning } fro
 
 export function buildHtmlCommand(): Command {
   const cmd = new Command("html")
-    .argument("[session-id]", "session id (optional when --file points at a single file)")
+    .argument("[session-id-or-url]", "会话 ID 或 ChatGPT 公开分享链接（--file 只有一个会话时可省略）")
     .description("Generate a single-file HTML report");
   withAgent(cmd)
     .option("-o, --out <path>", "output file", "session.html")

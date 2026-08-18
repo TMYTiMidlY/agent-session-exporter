@@ -49,6 +49,10 @@ export async function readJsonl(path: string): Promise<unknown[]> {
   return rows;
 }
 
+export async function readJson(path: string): Promise<unknown> {
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
 export function fileStem(path: string): string {
   return basename(path).replace(/\.jsonl$/, "");
 }

@@ -1,10 +1,11 @@
-export type AgentKind = "copilot" | "claude" | "codex";
+export type AgentKind = "copilot" | "claude" | "codex" | "chatgpt";
 
 export interface AgentRoots {
   copilot?: string;
   copilotDb?: string;
   claude?: string;
   codex?: string;
+  chatgpt?: string;
 }
 
 export interface SessionRef {
@@ -29,14 +30,18 @@ export interface SessionRef {
  * `turns` table when a session's events.jsonl is absent (e.g. pruned/old).
  */
 export interface SessionSource {
-  kind: "events" | "db-turns";
+  kind: "events" | "db-turns" | "chatgpt-share";
   path: string;
   lossy: boolean;
+  /** Human-readable caveat explaining exactly what the source omitted. */
+  warning?: string;
+  /** Original remote URL when `path` points at a locally imported snapshot. */
+  origin?: string;
 }
 
 export type TimelineRole = "user" | "assistant" | "tool" | "reasoning" | "system" | "event";
 
-export type ToolResultKind = "success" | "failure" | "rejected" | "denied" | "pending";
+export type ToolResultKind = "success" | "failure" | "rejected" | "denied" | "pending" | "redacted";
 
 export interface ToolDetail {
   callId?: string;

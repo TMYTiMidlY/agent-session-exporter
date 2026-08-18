@@ -11,7 +11,9 @@ export function parseSummaryFormat(value: string): SummaryFormat {
 export function sourceLabelForSession(session: ParsedSession): string | undefined {
   const source = session.source;
   if (!source || (!source.lossy && source.kind !== "db-turns")) return undefined;
-  return "db.turns (fallback)";
+  if (source.kind === "db-turns") return "db.turns (fallback)";
+  if (source.kind === "chatgpt-share") return "ChatGPT 分享";
+  return `${source.kind} (lossy)`;
 }
 
 export function summaryMismatchWarning(

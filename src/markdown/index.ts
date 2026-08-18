@@ -11,8 +11,8 @@
  * so this renderer doesn't know which agent the session came from beyond
  * picking a header title.
  */
-import type { ParsedSession, TimelineEntry, ToolDetail, ToolResultKind } from "../core/index.js";
-import { LOSSY_SOURCE_WARNING } from "../core/index.js";
+import type { AgentKind, ParsedSession, TimelineEntry, ToolDetail, ToolResultKind } from "../core/index.js";
+import { LOSSY_SOURCE_WARNING, lossySourceWarning } from "../core/index.js";
 
 export interface RenderMarkdownOptions {
   /** Include reasoning entries (default true, mirroring `/share file`). */
@@ -35,8 +35,10 @@ export function renderSessionMarkdown(session: ParsedSession, opts: RenderMarkdo
   const agentTitle = agentDisplay(session.agent);
 
   const visible = session.entries.filter((entry) => includeReasoning || entry.role !== "reasoning");
-  const sourceNote = opts.sourceLabel && opts.sourceLabel !== "events.jsonl"
-    ? `\n> [!WARNING]\n> ${LOSSY_SOURCE_WARNING}\n`
+  const sourceWarning = lossySourceWarning(session.source)
+    ?? sourceLabelWarning(opts.sourceLabel);
+  const sourceNote = sourceWarning
+    ? `\n> [!WARNING]\n> ${sourceWarning}\n`
     : "";
 
   const header =
@@ -60,7 +62,7 @@ export function renderSessionMarkdown(session: ParsedSession, opts: RenderMarkdo
       ? formatDuration(Math.max(0, Math.floor((new Date(entry.timestamp).getTime() - start.getTime()) / 1000)))
       : "";
     const prefix = elapsed ? `<sub>⏱️ ${elapsed}</sub>\n\n` : "";
-    return prefix + renderEntry(entry);
+    return prefix + renderEntry(entry, session.agent);
   }).join("\n---\n\n");
 
   const footer = opts.footer === ""
@@ -74,13 +76,14 @@ function agentDisplay(agent: string): string {
   if (agent === "copilot") return "🤖 Copilot CLI Session";
   if (agent === "claude") return "🌀 Claude Code Session";
   if (agent === "codex") return "🌀 Codex CLI Session";
+  if (agent === "chatgpt") return "🌀 ChatGPT 分享会话";
   return `🌀 ${agent} Session`;
 }
 
-function renderEntry(entry: TimelineEntry): string {
+function renderEntry(entry: TimelineEntry, agent: AgentKind): string {
   if (entry.role === "tool" && entry.tool) return renderTool(entry.tool);
   if (entry.role === "user") return heading("👤 User", entry.text);
-  if (entry.role === "assistant") return heading("💬 Copilot", entry.text);
+  if (entry.role === "assistant") return heading(`💬 ${assistantLabel(agent)}`, entry.text);
   if (entry.role === "reasoning") return heading("💭 Reasoning", `*${escapeMd(entry.text)}*`, { escape: false });
   if (entry.role === "system") return heading("ℹ️ System", entry.text);
 
@@ -199,7 +202,7 @@ function renderTool(tool: ToolDetail): string {
 }
 
 function hasResultBody(kind: ToolResultKind): boolean {
-  return kind === "success" || kind === "failure" || kind === "denied";
+  return kind === "success" || kind === "failure" || kind === "denied" || kind === "redacted";
 }
 
 function resultEmoji(kind?: ToolResultKind): string {
@@ -207,7 +210,20 @@ function resultEmoji(kind?: ToolResultKind): string {
   if (kind === "failure") return "❌";
   if (kind === "rejected") return "🚫";
   if (kind === "denied") return "⛔";
+  if (kind === "redacted") return "🔒";
   return "🔧";
+}
+
+function assistantLabel(agent: AgentKind): string {
+  if (agent === "copilot") return "Copilot";
+  if (agent === "claude") return "Claude";
+  if (agent === "codex") return "Codex";
+  return "ChatGPT";
+}
+
+function sourceLabelWarning(sourceLabel: string | undefined): string | undefined {
+  if (!sourceLabel || sourceLabel === "events.jsonl") return undefined;
+  return sourceLabel === "db.turns (fallback)" ? LOSSY_SOURCE_WARNING : sourceLabel;
 }
 
 function renderToolArgs(name: string, args: unknown): string {

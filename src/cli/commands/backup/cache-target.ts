@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { chatGptRoot } from "../../../core/index.js";
 import { BIN_NAME } from "../../brand.js";
 
 /** Expand a leading ~ to the home directory (mirrors core's fs.expandHome). */
@@ -16,8 +17,8 @@ export function defaultCacheDir(): string {
 
 /**
  * Refuse to restore into (or onto) a live agent home. The whole point of the
- * cache is to stay separate from ~/.copilot, ~/.claude and ~/.codex. Returns
- * the resolved, absolute target on success.
+ * cache is to stay separate from live agent homes and asmgr-managed imports.
+ * Returns the resolved, absolute target on success.
  */
 export function assertSafeCacheTarget(target: string): string {
   const resolved = resolve(expandHome(target));
@@ -25,10 +26,15 @@ export function assertSafeCacheTarget(target: string): string {
   if (resolved === home) {
     throw new Error(`refusing to restore into the home directory (${home}); choose a dedicated --target`);
   }
-  for (const name of [".copilot", ".claude", ".codex"]) {
-    const forbidden = join(home, name);
+  const forbiddenRoots = [
+    join(home, ".copilot"),
+    join(home, ".claude"),
+    join(home, ".codex"),
+    resolve(chatGptRoot()),
+  ];
+  for (const forbidden of forbiddenRoots) {
     if (resolved === forbidden || resolved.startsWith(forbidden + sep)) {
-      throw new Error(`refusing to restore into a live agent home (${forbidden}); choose a --target outside it`);
+      throw new Error(`refusing to restore into a live or managed session directory (${forbidden}); choose a dedicated --target`);
     }
   }
   return resolved;

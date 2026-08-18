@@ -118,6 +118,38 @@ describe("asmgr cli", () => {
     expect(parsed.id).toBe("copilot-fixture");
   });
 
+  it("shows an imported ChatGPT share snapshot through --file", async () => {
+    const { stdout } = await execFileAsync(tsx, [
+      cli,
+      "show",
+      "--file",
+      resolve(repoRoot, "fixtures/chatgpt-fixture.chatgpt-share.json"),
+      "--format",
+      "dialogue",
+    ]);
+    expect(stdout).toContain("agent: chatgpt");
+    expect(stdout).toContain("Find the answer");
+    expect(stdout).toContain("The final answer.");
+    expect(stdout).not.toContain("fixture query");
+  });
+
+  it("rejects non-share URLs before attempting discovery or network access", async () => {
+    await expect(
+      execFileAsync(tsx, [
+        cli,
+        "show",
+        "https://chatgpt.com/g/project/c/private",
+      ]),
+    ).rejects.toThrow(/地址栏复制的私有会话链接.*点击右上角“分享”/);
+    await expect(
+      execFileAsync(tsx, [
+        cli,
+        "import",
+        "https://example.com/share/not-chatgpt",
+      ]),
+    ).rejects.toThrow(/目前只支持 ChatGPT 的公开分享链接/);
+  });
+
   it("searches an explicit --file directory (restic-cache style)", async () => {
     const { stdout } = await execFileAsync(tsx, [
       cli,
@@ -200,11 +232,16 @@ describe("asmgr cli", () => {
     expect(sourceLabelForSession({
       ...base,
       source: { kind: "events", path: "events.jsonl", lossy: true },
-    })).toBe("db.turns (fallback)");
+    })).toBe("events (lossy)");
     expect(sourceLabelForSession({
       ...base,
       source: { kind: "db-turns", path: "session-store.db", lossy: false },
     })).toBe("db.turns (fallback)");
+    expect(sourceLabelForSession({
+      ...base,
+      agent: "chatgpt",
+      source: { kind: "chatgpt-share", path: "share.json", lossy: true },
+    })).toBe("ChatGPT 分享");
   });
 
   it("does not warn for matching summary formats", () => {

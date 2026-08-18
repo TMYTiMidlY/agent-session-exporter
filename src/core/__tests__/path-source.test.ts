@@ -57,10 +57,36 @@ describe("discoverPath", () => {
     expect(refs[0]?.agent).toBe("copilot");
   });
 
+  it("detects an imported ChatGPT snapshot from its explicit file", async () => {
+    const refs = await discoverPath(join(fixtures, "chatgpt-fixture.chatgpt-share.json"));
+    expect(refs).toHaveLength(1);
+    expect(refs[0]).toMatchObject({
+      agent: "chatgpt",
+      id: "chatgpt-fixture",
+      title: "ChatGPT fixture",
+    });
+  });
+
+  it("detects a ChatGPT snapshot even when --out used a custom JSON filename", async () => {
+    const scratch = await mkdtemp(join(process.cwd(), ".core-chatgpt-custom-"));
+    scratchDirectories.push(scratch);
+    const custom = join(scratch, "conversation.json");
+    await cp(join(fixtures, "chatgpt-fixture.chatgpt-share.json"), custom);
+    const refs = await discoverPath(custom);
+    expect(refs).toHaveLength(1);
+    expect(refs[0]?.agent).toBe("chatgpt");
+  });
+
+  it("rejects unsupported pretty-printed JSON instead of returning an empty session", async () => {
+    await expect(discoverPath(join(resolve(fixtures, ".."), "package.json"))).rejects.toThrow(
+      /不支持的 JSON 会话格式/,
+    );
+  });
+
   it("walks a directory and classifies each agent", async () => {
     const refs = await discoverPath(fixtures);
     const agents = new Set(refs.map((ref) => ref.agent));
-    expect(agents).toEqual(new Set(["copilot", "claude", "codex"]));
+    expect(agents).toEqual(new Set(["copilot", "claude", "codex", "chatgpt"]));
   });
 
   it("throws for a missing path", async () => {
