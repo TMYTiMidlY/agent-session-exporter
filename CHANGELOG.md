@@ -1,3 +1,15 @@
+# [0.3.0](https://github.com/TMYTiMidlY/agent-session-manager/compare/v0.2.0...v0.3.0) (2026-09-10)
+
+
+### Bug Fixes
+
+* stream large JSONL sessions without full-file buffering [skip ci] ([270ba5d](https://github.com/TMYTiMidlY/agent-session-manager/commit/270ba5d5ce13a906fb4b7495ead979350a1080c9))
+
+
+### Features
+
+* support DSH session archives and dialogue questions ([621ed5d](https://github.com/TMYTiMidlY/agent-session-manager/commit/621ed5df64b2156945b5842da3ce5605c6fd337d))
+
 # [0.2.0](https://github.com/TMYTiMidlY/agent-session-manager/compare/v0.1.0...v0.2.0) (2026-08-18)
 
 
