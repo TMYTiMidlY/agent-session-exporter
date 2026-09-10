@@ -2,6 +2,8 @@ import { createReadStream } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import * as zlib from "node:zlib";
+import { Readable } from "node:stream";
 
 export function expandHome(path: string): string {
   return path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
@@ -44,11 +46,34 @@ function parseJsonlLine(line: string): unknown {
   }
 }
 
+/** Node decodes one Zstandard frame per call; engine.bytesWritten identifies the next frame. */
+async function* zstdFrames(path: string): AsyncGenerator<Buffer> {
+  if (typeof zlib.zstdDecompressSync !== "function") {
+    throw new Error("读取 DSH .jsonl.zstd 需要支持 Zstandard 的运行时（Node.js >= 22.15）；也可读取未压缩的 .jsonl 文件");
+  }
+  const bytes = await readFile(path);
+  let offset = 0;
+  while (offset < bytes.length) {
+    // @types/node currently omits the documented info:true return overload.
+    const result = zlib.zstdDecompressSync(bytes.subarray(offset), { info: true }) as unknown as {
+      buffer: Buffer; engine: { bytesWritten: number };
+    };
+    const consumed = result.engine?.bytesWritten;
+    if (!Buffer.isBuffer(result.buffer) || !Number.isSafeInteger(consumed) || consumed <= 0 || consumed > bytes.length - offset) {
+      throw new Error("当前运行时不支持 Zstandard 帧读取，请使用 Node.js >= 22.15");
+    }
+    offset += consumed;
+    yield result.buffer;
+  }
+}
+
 export async function* iterateJsonl(path: string): AsyncGenerator<unknown> {
-  const input = createReadStream(path, { encoding: "utf8" });
+  const stream = path.endsWith(".jsonl.zstd")
+    ? Readable.from(zstdFrames(path)).setEncoding("utf8")
+    : createReadStream(path, { encoding: "utf8" });
   let fragments: string[] = [];
   try {
-    for await (const chunk of input) {
+    for await (const chunk of stream) {
       const text = chunk as string;
       let start = 0;
       let end = text.indexOf("\n");
@@ -70,7 +95,7 @@ export async function* iterateJsonl(path: string): AsyncGenerator<unknown> {
     const tail = fragments.join("");
     if (tail.trim()) yield parseJsonlLine(tail);
   } finally {
-    input.destroy();
+    stream.destroy();
   }
 }
 

@@ -5,11 +5,11 @@
 ![pnpm](https://img.shields.io/badge/pnpm-10.x-f69220?logo=pnpm&logoColor=white)
 ![Vitest](https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white)
 
-**把编码 agent 的 CLI 会话与公开 ChatGPT 分享导出成 Markdown 或单文件 HTML。** `asmgr`（Agent Session ManaGeR）读取 GitHub Copilot CLI、Claude Code、OpenAI Codex CLI 写在本地的会话历史，也可捕获公开 ChatGPT `/share/` 页面，再把选定的会话导出成自包含报告；来源无法完整保留的内容会显式标记。它是**一个**无 scope 的公开 npm 包，命令也叫 `asmgr`；HTML 与 Markdown 是它的导出能力，而非独立发布的产品。
+**把编码 agent 的 CLI 会话与公开 ChatGPT 分享导出成 Markdown 或单文件 HTML。** `asmgr`（Agent Session ManaGeR）读取 GitHub Copilot CLI、Claude Code、OpenAI Codex CLI、DeepSeek Harness（DSH）写在本地的会话历史，也可捕获公开 ChatGPT `/share/` 页面，再把选定的会话导出成自包含报告；来源无法完整保留的内容会显式标记。它是**一个**无 scope 的公开 npm 包，命令也叫 `asmgr`；HTML 与 Markdown 是它的导出能力，而非独立发布的产品。
 
 HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主题、sticky header、类型筛选 pill、侧栏目录、上一条/下一条用户消息跳转、搜索），差异见 [ADR 0003](docs/adr/0003-archive-reconstruction-fidelity.md)。Markdown 产物遵循 Copilot CLI `/share file` 的结构与约定（`### 💬/👤/🔧/✅` 标题、`<sub>⏱️</sub>` 耗时戳、`<details>` 折叠、diff 围栏、`[!NOTE]` 头块）。
 
-它对 agent 状态目录**只读**：不写 `.copilot`、`.claude`、`.codex`。传本地 session id 或 `--file` 时，`list` / `search` / `show` / `html` / `md` 都严格本地。只有显式导入或直接读取 ChatGPT 分享 URL，以及按配置访问 restic 仓库的 `backup` 命令会联网。
+它对 agent 状态目录**只读**：不写 `.copilot`、`.claude`、`.codex`、`.dsh`。传本地 session id 或 `--file` 时，`list` / `search` / `show` / `html` / `md` 都严格本地。只有显式导入或直接读取 ChatGPT 分享 URL，以及按配置访问 restic 仓库的 `backup` 命令会联网。
 
 > **归档 ≠ 恢复。** 导出的报告是有损、只读、给人看的产物，**不能**反推回可 `--resume` 的原生会话。把会话忠实恢复到"另一台机器能续聊"是一条**规划中**的独立能力（来源 = 备份快照 ∪ 另一台机器），与只读归档严格分层——理念见 [ADR 0001](docs/adr/0001-scope-archive-and-restore.md)。
 
@@ -37,11 +37,29 @@ HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主�
 - **Copilot CLI**：读取 `~/.copilot/session-state/*/events.jsonl`；同时用 `~/.copilot/session-store.db` 列出会话与元信息。events.jsonl 缺失（老会话被 prune、或只迁移了 DB）时回退到 DB 的 `turns` 表（lossy：只有 user/assistant 文本，工具与用户决策不可恢复）。所有读命令可用 `--copilot-db <path>` 覆盖 DB 路径。
 - **Claude Code**：读取 `~/.claude/projects/**/*.jsonl`
 - **Codex CLI**：读取 `~/.codex/sessions/**/*.jsonl`
+- **DeepSeek Harness（DSH）**：读取 `${DSH_HOME:-~/.dsh}/sessions/<project>/<session>/session[.vN].jsonl[.zstd]`；用 `--dsh-root <path>` 覆盖会话根目录。目录发现选择每个会话的最高版本文件；`--file` 指向单个文件时读取指定版本。
 - **ChatGPT 公共分享**：`asmgr import <url>` 从 `/share/<id>` 页面的 React Router 水合数据读取
   `linear_conversation`。默认托管目录中的快照会自动进入 `list/search/show/html/md`；
   也可把 URL 直接传给 `show/html/md`，不落盘使用。
 
-每个读命令（`list` / `search` / `show` / `html` / `md`）都接受 `--file <path>`（别名 `--events <path>`），读一个显式的 `*.jsonl` / `*.chatgpt-share.json` 文件——或一个会被遍历出这些文件的目录——而不是 live agent 主目录。每个文件的 agent 格式自动探测（用 `--agent` 覆盖）。未知 JSON 会明确报错，不再静默显示成空会话。
+每个读命令（`list` / `search` / `show` / `html` / `md`）都接受 `--file <path>`（别名 `--events <path>`），读一个显式的 `*.jsonl` / DSH `*.jsonl.zstd` / `*.chatgpt-share.json` 文件——或一个会被遍历出这些文件的目录——而不是 live agent 主目录。每个文件的 agent 格式自动探测（用 `--agent` 覆盖）。未知 JSON 会明确报错，不再静默显示成空会话。
+
+### DSH 读取与主干
+
+**默认自动使用 DSH home，无需传 `--dsh-root`。** 会话目录优先级为：显式 `--dsh-root` → 环境变量 `DSH_HOME` 下的 `sessions/` → 当前用户的 `~/.dsh/sessions/`。`--dsh-root` 仅用于覆盖会话日志根目录，例如读取备份；它不是 DSH 源码目录，也不是项目工作目录。
+
+```bash
+asmgr list --agent dsh
+asmgr show <session-id> --agent dsh --format dialogue
+asmgr show --file /path/to/session.jsonl.zstd --format dialogue
+asmgr html <session-id> --agent dsh -o dsh-session.html
+```
+
+以官方 [`dsh-v0.1.5-rc.1`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.5-rc.1) 为基线，直接使用 `dsh-session-format-catalog` 的 v0→v3 解码/迁移及 `dsh-session/surface` 的原始追加消息筛选。迁移在内存中进行，不依赖本机 DSH 安装、不启动插件、不改写源日志。主干包含直接用户输入、助手正文，以及原生或 PTC 调用中 `ask_user_question` 的题目、全部选项与匹配的回答；普通工具的参数和结果完全不显示。回答按官方格式记录，不额外推断回答者身份。
+
+范围保持有限：不解释未知插件事件、注入上下文、失败模型尝试或任意 `meta`；不把压缩 replacement 当成新对话，不重复拼接 fork 的父会话。只显示官方 compact checkpoint 对应的摘要。图片/文件只显示占位符并提示损失；完整工具仍在 text/HTML/Markdown 中保留。HTML/Markdown 暂无独立的主干导出开关。
+
+压缩日志需要运行时提供 Zstandard API（Node.js ≥ 22.15）；运行时缺少帧解码能力时明确报错，不把未读取内容当空会话。未知版本、官方迁移器拒绝的旧日志、损坏或未写完的文件会报出路径与原因，不尝试自定义补救，也不会自动回退到旧一代文件。已知官方边界包括 v0 中的 `subagent/descriptor.version: 2`：最新迁移器明确拒绝它；不能仅把该字段改成 3 来冒充兼容。
 
 ## <a id="install"></a>安装
 
@@ -215,7 +233,7 @@ asmgr show <session-id> --agent codex --format json
 asmgr show 'https://chatgpt.com/share/<id>' --format dialogue
 ```
 
-`--format dialogue` 只保留**用户消息 / 用户决策（`ask_user` 的回答）/ 压缩摘要 / 助手回复**，跳过工具调用与 reasoning。工具噪音被剔掉后，每条用户 prompt 直接紧跟回答它的助手回复，prompt↔回复的对应关系一目了然——适合会话复盘、交接和收尾盘点等需要通读对话主干的场景。`--format text` 则含完整工具参数+结果、子代理/技能/计划/压缩统计。
+`--format dialogue` 只保留**用户消息 / 交互式提问与选项 / 用户决策或回答 / 压缩摘要 / 助手回复**，跳过普通工具调用的全部内容与 reasoning。DSH 的 `ask_user_question` 保留题目、全部选项、单/多选信息、选中项和自由回答；Copilot 的 `ask_user` 保留题目、全部候选项及回答。工具噪音被剔掉后，每条用户 prompt 直接紧跟回答它的助手回复，prompt↔回复的对应关系一目了然——适合会话复盘、交接和收尾盘点等需要通读对话主干的场景。`--format text` 则含完整工具参数+结果、子代理/技能/计划/压缩统计。
 
 ### `asmgr html`
 

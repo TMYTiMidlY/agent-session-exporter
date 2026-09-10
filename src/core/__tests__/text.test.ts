@@ -89,6 +89,27 @@ describe("sessionToText", () => {
     expect(text).not.toContain("NOTIFICATION NOISE");
   });
 
+  it("keeps every Copilot question choice without duplicating the question", async () => {
+    const session = await parseCopilot({ agent: "copilot", id: "ask", path: resolve(fixtures, "copilot-ask-user.events.jsonl") });
+    const text = sessionToDialogue(session);
+    expect(text).toContain("Q: Which database should we use?\n选项：\n1. PostgreSQL\n2. SQLite\nA: User selected: PostgreSQL");
+    expect(text.match(/Q: Which database should we use\?/g)).toHaveLength(1);
+    expect(text).not.toContain("tool: ask_user");
+    expect(text).not.toContain("args:");
+  });
+
+  it("never renders tool payloads even when another role or summary kind is attached", () => {
+    const session: ParsedSession = { agent: "dsh", id: "mixed", path: "/dev/null", entries: [
+      { index: 0, role: "assistant", kind: "message", text: "TOOL PAYLOAD", tool: { name: "bash", arguments: "hidden" } },
+      { index: 1, role: "tool", kind: "compaction", text: "TOOL SUMMARY" },
+      { index: 2, role: "user", kind: "message", text: "kept" },
+    ] };
+    const text = sessionToDialogue(session);
+    expect(text).toContain("kept");
+    expect(text).not.toContain("TOOL");
+    expect(text).not.toContain("hidden");
+  });
+
   it("flags a lossy db-turns source in text and dialogue output", () => {
     const lossy: ParsedSession = {
       agent: "copilot",

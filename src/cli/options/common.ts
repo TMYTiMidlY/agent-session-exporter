@@ -8,7 +8,7 @@ import type { Command } from "commander";
 
 /** `-a, --agent` selector. */
 export function withAgent(cmd: Command): Command {
-  return cmd.option("-a, --agent <agent>", "copilot|claude|codex|chatgpt|all", "all");
+  return cmd.option("-a, --agent <agent>", "copilot|claude|codex|chatgpt|dsh|all", "all");
 }
 
 /**
@@ -28,7 +28,8 @@ export function withRoots(cmd: Command): Command {
     .option("--copilot-db <path>", "override Copilot session-store.db (for pruned/DB-only sessions)")
     .option("--claude-root <path>", "override Claude projects root")
     .option("--codex-root <path>", "override Codex sessions root")
-    .option("--chatgpt-root <path>", "覆盖托管的 ChatGPT 导入目录");
+    .option("--chatgpt-root <path>", "覆盖托管的 ChatGPT 导入目录")
+    .option("--dsh-root <path>", "override DeepSeek Harness sessions root");
 }
 
 /** agent + source + roots, in the historical order — for commands with no interleaved options. */

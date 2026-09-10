@@ -6,6 +6,7 @@ import type { AgentKind, AgentRoots, ParsedSession, SearchHit, SessionRef, Sessi
 import { discoverClaude, parseClaude } from "./adapters/claude.js";
 import { discoverCodex, parseCodex } from "./adapters/codex.js";
 import { discoverCopilot, parseCopilot } from "./adapters/copilot.js";
+import { discoverDsh, dshLogVersion, isDshHeader, parseDsh, refFromDshFile, selectDshGenerations } from "./adapters/dsh.js";
 import {
   discoverChatGpt,
   isChatGptShareSnapshot,
@@ -31,7 +32,7 @@ export {
   type ChatGptShareSnapshot,
 } from "./adapters/chatgpt.js";
 
-export const AGENTS: AgentKind[] = ["copilot", "claude", "codex", "chatgpt"];
+export const AGENTS: AgentKind[] = ["copilot", "claude", "codex", "chatgpt", "dsh"];
 
 export async function discoverSessions(agents: AgentKind[] = AGENTS, roots: AgentRoots = {}): Promise<SessionRef[]> {
   const found: SessionRef[] = [];
@@ -39,6 +40,7 @@ export async function discoverSessions(agents: AgentKind[] = AGENTS, roots: Agen
   if (agents.includes("claude")) found.push(...(await discoverClaude(roots.claude)));
   if (agents.includes("codex")) found.push(...(await discoverCodex(roots.codex)));
   if (agents.includes("chatgpt")) found.push(...(await discoverChatGpt(roots.chatgpt)));
+  if (agents.includes("dsh")) found.push(...(await discoverDsh(roots.dsh)));
   return found.sort((a, b) => a.agent.localeCompare(b.agent) || a.id.localeCompare(b.id));
 }
 
@@ -46,6 +48,7 @@ export async function parseSession(ref: SessionRef): Promise<ParsedSession> {
   if (ref.agent === "copilot") return parseCopilot(ref);
   if (ref.agent === "claude") return parseClaude(ref);
   if (ref.agent === "codex") return parseCodex(ref);
+  if (ref.agent === "dsh") return parseDsh(ref);
   return parseChatGpt(ref);
 }
 
@@ -138,6 +141,7 @@ const CLAUDE_TYPES = new Set(["user", "assistant", "system", "ai-title", "summar
  * types. Returns undefined when nothing matches.
  */
 export function detectAgent(rows: unknown[], path?: string): AgentKind | undefined {
+  if (isDshHeader(rows[0])) return "dsh";
   let copilot = 0;
   let codex = 0;
   let claude = 0;
@@ -190,6 +194,10 @@ function deriveId(path: string, agent: AgentKind, rows: unknown[]): string {
 /** Build a SessionRef from an explicit JSONL or ChatGPT snapshot file. */
 export async function refFromFile(path: string, agentOverride?: AgentKind): Promise<SessionRef> {
   const abs = expandHome(path);
+  if (agentOverride === "dsh" || abs.endsWith(".jsonl.zstd")) {
+    if (agentOverride && agentOverride !== "dsh") throw new Error(`DSH 压缩日志与 --agent ${agentOverride} 不匹配：${path}`);
+    return refFromDshFile(abs);
+  }
   let document: unknown;
   let isJsonDocument = false;
   if (!abs.endsWith(".jsonl")) {
@@ -211,6 +219,10 @@ export async function refFromFile(path: string, agentOverride?: AgentKind): Prom
     if (!detected || detected === "chatgpt") {
       throw new Error(`不支持的 JSON 会话格式：${path}`);
     }
+    if (detected === "dsh") {
+      if (agentOverride) throw new Error(`DSH 日志与 --agent ${agentOverride} 不匹配：${path}`);
+      return refFromDshFile(abs);
+    }
     const agent = agentOverride ?? detected;
     if (agent === "chatgpt") {
       throw new Error(`该文件包含 ${detected} 会话数据，与 --agent chatgpt 不匹配：${path}`);
@@ -221,6 +233,10 @@ export async function refFromFile(path: string, agentOverride?: AgentKind): Prom
     return refFromChatGptFile(abs);
   }
   const rows = await readJsonl(abs, 50);
+  if (isDshHeader(rows[0])) {
+    if (agentOverride) throw new Error(`DSH 日志与 --agent ${agentOverride} 不匹配：${path}`);
+    return refFromDshFile(abs);
+  }
   const agent = agentOverride ?? detectAgent(rows, abs);
   if (!agent) throw new Error(`不支持的会话文件格式：${path}`);
   if (agent === "chatgpt") return refFromChatGptFile(abs);
@@ -243,10 +259,11 @@ export async function discoverPath(path: string, agentOverride?: AgentKind): Pro
   if (!(await pathExists(abs))) throw new Error(`path not found: ${path}`);
   const info = await stat(abs);
   if (info.isFile()) return [await refFromFile(abs, agentOverride)];
-  const files = await walkFiles(
+  const files = selectDshGenerations(await walkFiles(
     abs,
-    (candidate) => candidate.endsWith(".jsonl") || candidate.endsWith(".chatgpt-share.json"),
-  );
+    (candidate) => candidate.endsWith(".jsonl") || candidate.endsWith(".chatgpt-share.json")
+      || (candidate.endsWith(".jsonl.zstd") && dshLogVersion(candidate) !== undefined),
+  ));
   const refs: SessionRef[] = [];
   for (const file of files) refs.push(await refFromFile(file, agentOverride));
   return refs.sort((a, b) => a.agent.localeCompare(b.agent) || a.id.localeCompare(b.id));
@@ -278,10 +295,11 @@ export function sessionToDialogue(session: ParsedSession): string {
   // "reasoning"/"event" and drop out. Compaction recaps are kept explicitly
   // (Copilot "compaction" event, Codex "compacted").
   const entries = session.entries.filter((entry) =>
-    entry.role === "user"
-    || entry.role === "assistant"
-    || entry.kind === "compaction"
-    || entry.kind === "compacted");
+    !entry.tool && entry.role !== "tool" && (
+      entry.role === "user"
+      || entry.role === "assistant"
+      || entry.kind === "compaction"
+      || entry.kind === "compacted"));
   return renderSessionText(session, entries, false);
 }
 
@@ -307,7 +325,7 @@ function timelineEntryToText(entry: TimelineEntry): string {
   if (entry.kind === "decision") {
     const question = entry.title?.trim();
     const prefix = question ? `Q: ${question}\nA: ` : "";
-    return prefix && !entry.text.startsWith(prefix) ? `${prefix}${entry.text}` : entry.text;
+    return prefix && !entry.text.startsWith(`Q: ${question}\n`) ? `${prefix}${entry.text}` : entry.text;
   }
 
   if (entry.tool) {

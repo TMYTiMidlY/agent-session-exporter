@@ -210,7 +210,7 @@ export async function parseCopilot(ref: SessionRef): Promise<ParsedSession> {
           role: "user",
           kind: "decision",
           title: question,
-          text: question ? `Q: ${question}\nA: ${answer}` : answer,
+          text: question ? `Q: ${question}${askUserChoices(tool.arguments)}\nA: ${answer}` : answer,
           timestamp,
           rawType: "ask_user.decision",
         });
@@ -483,6 +483,13 @@ function askUserQuestion(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const question = (value as Record<string, unknown>).question;
   return typeof question === "string" && question.trim() ? question.trim() : undefined;
+}
+
+function askUserChoices(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const choices = (value as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || !choices.length || !choices.every((choice) => typeof choice === "string")) return "";
+  return `\n选项：${choices.map((choice, index) => `\n${index + 1}. ${choice}`).join("")}`;
 }
 
 function toolEntryFromStart(data: Record<string, unknown>, timestamp: string | undefined, rawType: string): Omit<TimelineEntry, "index"> {

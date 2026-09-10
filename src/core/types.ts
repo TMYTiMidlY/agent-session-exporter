@@ -1,4 +1,4 @@
-export type AgentKind = "copilot" | "claude" | "codex" | "chatgpt";
+export type AgentKind = "copilot" | "claude" | "codex" | "chatgpt" | "dsh";
 
 export interface AgentRoots {
   copilot?: string;
@@ -6,6 +6,7 @@ export interface AgentRoots {
   claude?: string;
   codex?: string;
   chatgpt?: string;
+  dsh?: string;
 }
 
 export interface SessionRef {
