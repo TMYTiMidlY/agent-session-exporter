@@ -45,7 +45,7 @@ HTML 产物高度复刻 Copilot CLI 内置 `/share html` 的排版（Primer 主�
 
 ## <a id="install"></a>安装
 
-`asmgr` 已发布为单一、无 scope 的公开 npm 包：
+`asmgr` 已发布为单一、无 scope 的公开 npm 包。以下是安装已发布版本的方法；维护者推送代码前请先看[版本与发布](#release)，**普通推送 `main` 可能自动发版**。
 
 ### npm
 
@@ -451,6 +451,96 @@ Stars 只反映当时状态，不作为持续更新的排名。
 
 </details>
 
+## <a id="release"></a>维护者：版本与发布
+
+> **推送 `main` 不等于“只同步代码”。** 当前使用 **semantic-release** 自动推导并发布版本，
+> 不是维护者先运行 `cz bump` 再推 tag。发布前必须检查上次发布以来的**全部提交**，不能只看本次提交的类型。
+
+操作规则以 [`release.yml`](.github/workflows/release.yml)（触发条件、测试与权限）和
+[`.releaserc.json`](.releaserc.json)（提交分析、版本写回、构建与发布插件）为准。
+
+### 什么操作会启动发布
+
+| 操作 | 当前行为 |
+|---|---|
+| 向 `main` 推送，或合并 PR 使 `main` 更新 | 自动运行 `release` 工作流：安装依赖 → `pnpm test` → `semantic-release`；没有按文件路径过滤，纯文档推送也会启动 |
+| 在 GitHub Actions 手动运行 `release`，选择 `main` | 运行同一条发布流水线；**不是预演**，也不强制一定产生新版本 |
+| 只在本地 commit、推送非 `main` 分支、仅创建 PR，或单独推 tag | 不触发当前发布工作流；semantic-release 的发布分支也仅配置了 `main` |
+
+**启动工作流 ≠ 一定发版。** 测试通过后，semantic-release 分析上个发布 tag 到本次运行提交之间的
+提交记录；没有符合发布规则的提交时，不生成新版本。有可发布变更且验证、构建等步骤成功时，就会实际发布。
+
+### 提交如何决定版本
+
+当前未自定义 `releaseRules` 或解析器，使用默认 Angular 风格的提交解析（如 `fix(parser): ...`）：
+
+| 提交内容 | 版本变化（以上一版 `0.2.0` 为例） |
+|---|---|
+| `fix: ...`、`perf: ...` | patch → `0.2.1` |
+| `feat: ...` | minor → `0.3.0` |
+| 正文或页脚含 `BREAKING CHANGE: ...` | major → `1.0.0`，不会因仍处于 `0.x` 自动降为 minor |
+| 被解析为 revert 的回退提交 | 默认 patch；在分析区间内成功匹配的原提交与回退会被成对过滤 |
+| 普通 `docs:`、`chore:`、`ci:`、`test:`、`refactor:` 等，不含破坏性变更说明 | 自身不要求发布 |
+
+同一分析区间按**最高级别**决定一个版本，而非每条提交各发一版。破坏性变更请使用明确的
+`BREAKING CHANGE:` 正文或页脚，**不要只写 `feat!:` / `fix!:`**：当前默认解析器不凭标题中的 `!` 识别破坏性变更。
+
+“本次只有 `docs:`”**不保证不发版**：如果此前有尚未发布的 `fix:` / `feat:`，本次运行仍会把它们纳入分析。
+发布的是本次运行所检出的完整源码，不是只打包触发版本升级的那几条提交；CHANGELOG 则按提交规则生成摘要。
+
+### 版本、标签和产物由谁生成
+
+日常维护不要用 `cz bump`、`npm version`、手工改 `package.json` 版本或手工打发布 tag 来推动发版。
+semantic-release 以 Git 发布历史为依据，在 CI 中自动完成：
+
+1. 推导下个版本并生成 release notes，更新 `CHANGELOG.md` 与 `package.json` 的版本。
+2. 构建 Node 单文件 bundle、Linux x64 / macOS Intel / macOS Apple Silicon / Windows x64 四平台二进制及 `SHA256SUMS.txt`。
+3. 将 `package.json` 和 `CHANGELOG.md` 以 `chore(release): X.Y.Z [skip ci]` 提交回 `main`，并创建、推送 `vX.Y.Z` tag。
+4. 发布公开 npm 包 [`asmgr`](https://www.npmjs.com/package/asmgr)，创建 [GitHub Release](https://github.com/TMYTiMidlY/agent-session-manager/releases)，附上 notes、二进制、Node bundle 和校验和。
+
+npm 发布走 OIDC Trusted Publishing（`npmjs` environment），GitHub 操作使用工作流的 `GITHUB_TOKEN`。
+它是直接发布，不是先生成等待人工确认的 npm 暂存版本。
+
+### 只推代码：优先使用非 `main` 分支
+
+不准备发布时，将提交保留在工作分支并只推该分支，例如：
+
+```bash
+# 从当前提交创建工作分支；分支名按需替换
+git switch -c work/my-change
+# 在该分支完成提交后，只推当前分支，不更新 main
+git push -u origin HEAD
+```
+
+合并该分支到 `main` 仍可能发版，合并前需要重新确认发布范围。
+
+如果确实要把代码推到 `main`，但只想跳过**这次 push** 的工作流，可在提交消息中加 `[skip ci]`
+（例如 `fix: handle large sessions [skip ci]`）。注意：
+
+- 它跳过匹配的 `push` / `pull_request` 工作流，**测试也会跳过**；不会取消已启动的运行，也不阻止手动 `workflow_dispatch`。
+- 它不是 semantic-release 的“永不发布此提交”标记。该修复仍在上个 tag 之后，下一次未跳过的 `main` 推送或手动发布仍会分析并可能发布它。
+- 因而它只适合临时跳过一次触发，不能作为长期发布闸门，也不能防止其他维护者后续推送带出该变更。
+
+### 明确批准一次发布
+
+1. 维护者先核对目标 `main` 提交 SHA、上个发布 tag 之后的全部变更与预期版本，确认这些内容都允许公开发布。
+2. 明确批准后，再向 `main` 普通推送 / 合并以启动自动发布；若待发布提交已在 `main`（例如此前用了 `[skip ci]`），
+   可在 GitHub Actions → `release` → **Run workflow** 选择 `main`，或执行：
+
+   ```bash
+   # 真正启动发布，不是 dry-run；只在明确批准后执行
+   gh workflow run release.yml --ref main
+   ```
+
+3. 检查运行结果，以及回写的版本 / CHANGELOG、`vX.Y.Z` tag、npm 版本和 GitHub Release 附件。手动运行没有绕过提交分析；无可发布变更时仍不会发新版本。
+
+**“单独提交”只授权本地 commit，不包含 push 或发布；“只推代码”应使用非 `main` 分支。**
+自动化助手执行可能发版的 `main` 推送 / 合并或手动运行前，必须说明发布影响并取得维护者明确同意。
+
+当前工作流没有 `publish=true` 一类的二次确认输入；`environment: npmjs` 本身也**不代表已有人工审批**，
+是否等待审批取决于仓库 Settings → Environments → `npmjs` 的保护规则。若需要每次都强制人工批准，
+应在那里配置 required reviewers（以仓库支持情况为准），或另行修改工作流为仅手动发布；这些都需要单独配置，不能靠 `[skip ci]` 实现。
+
 <details>
 <summary>维护者：公开前安全检查</summary>
 
@@ -474,4 +564,4 @@ git grep -nE 'PRIVATE|SECRET|TOKEN|PASSWORD|AKIA|/(h[o]me|Users)/|10\\.|192\\.16
 - **忠实恢复 / 迁移**：把会话恢复到"另一台机器能 `--resume`"的原生状态（来源 = 备份快照 ∪ 另一台机器）——边界见 [ADR 0001](docs/adr/0001-scope-archive-and-restore.md)。
 - **本地 Web 界面 `asmgr web`**：本机启动、仅供自己查看的会话浏览界面。
 
-单文件分发与 npm 发布**已实现**（单一无 scope 包 `asmgr`、四平台原生二进制、semantic-release、`npm i -g github:` 免 registry 安装）——详见[安装](#install)。其余（持久化索引外部会话目录、提升适配器保真度、项目层级索引页、Token / 成本视图、实时 tail、VS Code 扩展、Pages 导出 tarball、跨多会话仪表盘）见 issues。
+单文件分发与 npm 发布**已实现**（单一无 scope 包 `asmgr`、四平台原生二进制、semantic-release、`npm i -g github:` 免 registry 安装）——使用方式见[安装](#install)，发布规则见[维护者：版本与发布](#release)。其余（持久化索引外部会话目录、提升适配器保真度、项目层级索引页、Token / 成本视图、实时 tail、VS Code 扩展、Pages 导出 tarball、跨多会话仪表盘）见 issues。
