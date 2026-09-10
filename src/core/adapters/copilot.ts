@@ -1,7 +1,7 @@
 import { basename, dirname } from "node:path";
 import type { ParsedSession, SessionRef, TimelineEntry, ToolDetail, ToolResultKind } from "../types.js";
 import { contentToText } from "../text.js";
-import { expandHome, readJsonl, walkFiles } from "../fs.js";
+import { expandHome, iterateJsonl, walkFiles } from "../fs.js";
 import { listCopilotDbSessions, readCopilotDbSession } from "./copilot-db.js";
 
 const DEFAULT_ROOT = "~/.copilot/session-state";
@@ -94,7 +94,6 @@ export async function parseCopilot(ref: SessionRef): Promise<ParsedSession> {
     return parseCopilotDb(ref);
   }
 
-  const rows = await readJsonl(ref.path);
   const entries: TimelineEntry[] = [];
   let cwd = ref.cwd;
   let startedAt = ref.startedAt;
@@ -118,7 +117,7 @@ export async function parseCopilot(ref: SessionRef): Promise<ParsedSession> {
     return full;
   }
 
-  for (const row of rows) {
+  for await (const row of iterateJsonl(ref.path)) {
     if (!row || typeof row !== "object") continue;
     const event = row as Record<string, unknown>;
     const data = (event.data ?? {}) as Record<string, unknown>;

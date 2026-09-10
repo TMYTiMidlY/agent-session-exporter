@@ -220,7 +220,7 @@ export async function refFromFile(path: string, agentOverride?: AgentKind): Prom
   if (agentOverride === "chatgpt" || abs.endsWith(".chatgpt-share.json")) {
     return refFromChatGptFile(abs);
   }
-  const rows = await readJsonl(abs);
+  const rows = await readJsonl(abs, 50);
   const agent = agentOverride ?? detectAgent(rows, abs);
   if (!agent) throw new Error(`不支持的会话文件格式：${path}`);
   if (agent === "chatgpt") return refFromChatGptFile(abs);
